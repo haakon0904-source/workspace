@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: stock-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api_server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: KIS_APP_KEY
+        sync: false
+      - key: KIS_APP_SECRET
+        sync: false
+      - key: KIS_ACCOUNT_NO
+        sync: false
+      - key: KIS_ACCOUNT_SUFFIX
+        sync: false
+      - key: KIS_MODE
+        value: real
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
