@@ -1,0 +1,8 @@
+.env
+.envy
+__pycache__/
+*.pyc
+*.pyo
+data/kakao_token.json
+logs/
+.DS_Store
