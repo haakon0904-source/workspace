@@ -4,5 +4,6 @@ __pycache__/
 *.pyc
 *.pyo
 data/kakao_token.json
+data/kis_token.json
 logs/
 .DS_Store
