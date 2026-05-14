@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoSeller Dashboard</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; }
+
+  header { background: #1a1d2e; padding: 16px 24px; border-bottom: 1px solid #2a2d3e; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 18px; font-weight: 600; color: #fff; }
+  .badge { background: #2563eb; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid #2a2d3e; background: #1a1d2e; padding: 0 24px; }
+  .tab { padding: 12px 20px; cursor: pointer; font-size: 14px; color: #888; border-bottom: 2px solid transparent; transition: all .2s; }
+  .tab.active { color: #fff; border-bottom-color: #2563eb; }
+  .tab:hover { color: #ccc; }
+
+  .panel { display: none; padding: 24px; }
+  .panel.active { display: block; }
+
+  /* Pipeline */
+  .pipeline-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
+  .btn-run { background: #2563eb; color: #fff; border: none; padding: 10px 24px; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 500; transition: background .2s; }
+  .btn-run:hover { background: #1d4ed8; }
+  .btn-run:disabled { background: #374151; cursor: not-allowed; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #374151; }
+  .status-dot.running { background: #22c55e; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  .status-text { font-size: 13px; color: #888; }
+
+  .log-box { background: #0d0f1a; border: 1px solid #2a2d3e; border-radius: 8px; padding: 16px; height: 520px; overflow-y: auto; font-family: 'Menlo', 'Monaco', monospace; font-size: 12px; line-height: 1.6; }
+  .log-line { color: #a0aec0; }
+  .log-line.ok { color: #22c55e; }
+  .log-line.fail { color: #ef4444; }
+  .log-line.head { color: #60a5fa; font-weight: 600; }
+  .log-line.step { color: #f59e0b; }
+
+  /* Products */
+  .summary-bar { display: flex; gap: 16px; margin-bottom: 20px; }
+  .card { background: #1a1d2e; border: 1px solid #2a2d3e; border-radius: 8px; padding: 16px 20px; min-width: 140px; }
+  .card-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .card-value { font-size: 24px; font-weight: 700; color: #fff; }
+  .card-value.green { color: #22c55e; }
+  .card-value.blue { color: #60a5fa; }
+
+  .search-bar { margin-bottom: 16px; }
+  .search-bar input { background: #1a1d2e; border: 1px solid #2a2d3e; color: #e0e0e0; padding: 8px 14px; border-radius: 6px; width: 280px; font-size: 13px; outline: none; }
+  .search-bar input:focus { border-color: #2563eb; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { background: #1a1d2e; padding: 10px 12px; text-align: left; color: #888; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid #2a2d3e; cursor: pointer; user-select: none; }
+  thead th:hover { color: #ccc; }
+  tbody tr { border-bottom: 1px solid #1a1d2e; transition: background .1s; }
+  tbody tr:hover { background: #1a1d2e; }
+  tbody td { padding: 10px 12px; color: #c0c0c0; }
+  .title-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .margin-bar { display: flex; align-items: center; gap: 8px; }
+  .margin-fill { height: 6px; border-radius: 3px; background: #2563eb; min-width: 2px; }
+  .margin-text { font-size: 12px; color: #e0e0e0; min-width: 40px; }
+  .status-chip { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+  .chip-uploaded { background: #14532d; color: #4ade80; }
+  .chip-pending { background: #1e3a5f; color: #60a5fa; }
+  .chip-upload_failed { background: #450a0a; color: #f87171; }
+  .chip-승인완료 { background: #14532d; color: #4ade80; }
+  .chip-임시저장 { background: #3b2f00; color: #fbbf24; }
+  .chip-심사중 { background: #1e3a5f; color: #60a5fa; }
+  .chip-판매중지 { background: #2d1b1b; color: #f87171; }
+  .btn-stop { background: none; border: 1px solid #ef4444; color: #ef4444; padding: 2px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+  .btn-stop:hover { background: #450a0a; }
+  .btn-sync { background: #1a1d2e; border: 1px solid #2a2d3e; color: #888; padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .btn-sync:hover { border-color: #60a5fa; color: #60a5fa; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AutoSeller</h1>
+  <span class="badge">Dashboard</span>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('pipeline')">파이프라인</div>
+  <div class="tab" onclick="switchTab('products')">마진 / 상품</div>
+</div>
+
+<!-- 파이프라인 탭 -->
+<div id="panel-pipeline" class="panel active">
+  <div class="pipeline-header">
+    <button class="btn-run" id="btnRun" onclick="runPipeline()">파이프라인 실행</button>
+    <div class="status-dot" id="statusDot"></div>
+    <span class="status-text" id="statusText">대기 중</span>
+  </div>
+  <div class="log-box" id="logBox"></div>
+</div>
+
+<!-- 마진/상품 탭 -->
+<div id="panel-products" class="panel">
+  <div class="summary-bar" id="summaryBar"></div>
+  <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;">
+    <input type="text" id="searchInput" placeholder="상품명 검색..." oninput="filterTable()"
+           style="background:#1a1d2e;border:1px solid #2a2d3e;color:#e0e0e0;padding:8px 14px;border-radius:6px;width:280px;font-size:13px;outline:none;">
+    <button class="btn-sync" onclick="syncCoupang()" id="btnSync">쿠팡 상태 동기화</button>
+    <span id="syncMsg" style="font-size:12px;color:#888;"></span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th onclick="sortBy('item_no')">상품번호</th>
+        <th onclick="sortBy('title')">상품명</th>
+        <th onclick="sortBy('keyword')">키워드</th>
+        <th onclick="sortBy('buy_price')" class="num">매입가</th>
+        <th onclick="sortBy('sell_price')" class="num">판매가</th>
+        <th onclick="sortBy('profit')" class="num">순이익</th>
+        <th onclick="sortBy('margin_rate')">마진율</th>
+        <th onclick="sortBy('coupang_status')">쿠팡 상태</th>
+      </tr>
+    </thead>
+    <tbody id="productBody"></tbody>
+  </table>
+</div>
+
+<script>
+let _products = [];
+let _sortKey = 'created_at';
+let _sortAsc = false;
+let _es = null;
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['pipeline','products'][i] === name));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  if (name === 'products') loadProducts();
+}
+
+/* ── Pipeline ── */
+function runPipeline() {
+  fetch('/api/pipeline/run', {method:'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) { alert(d.error); return; }
+      document.getElementById('logBox').innerHTML = '';
+      startStream();
+      setRunning(true);
+    });
+}
+
+function startStream() {
+  if (_es) _es.close();
+  _es = new EventSource('/api/pipeline/stream');
+  _es.onmessage = e => {
+    if (e.data === 'ping') return;
+    if (e.data === '__END__') { _es.close(); setRunning(false); return; }
+    const msg = JSON.parse(e.data);
+    appendLog(msg);
+  };
+}
+
+function appendLog(msg) {
+  const box = document.getElementById('logBox');
+  const div = document.createElement('div');
+  div.className = 'log-line' +
+    (msg.includes('✓') ? ' ok' : msg.includes('✗') ? ' fail' :
+     msg.startsWith('===') || msg.startsWith('[Step') ? ' head' :
+     msg.startsWith('[step') ? ' step' : '');
+  div.textContent = msg;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function setRunning(on) {
+  document.getElementById('btnRun').disabled = on;
+  document.getElementById('statusDot').className = 'status-dot' + (on ? ' running' : '');
+  document.getElementById('statusText').textContent = on ? '실행 중...' : '완료';
+}
+
+// 페이지 로드 시 실행 중이면 스트림 연결
+fetch('/api/pipeline/status').then(r=>r.json()).then(d => {
+  if (d.running) { setRunning(true); startStream(); }
+});
+
+/* ── Products ── */
+function loadProducts() {
+  fetch('/api/products').then(r=>r.json()).then(data => {
+    _products = data;
+    renderSummary(data);
+    renderTable(data);
+  });
+}
+
+function renderSummary(data) {
+  const total = data.length;
+  const uploaded = data.filter(p => p.status === 'uploaded').length;
+  const avgMargin = total ? (data.reduce((s,p) => s + p.margin_rate, 0) / total * 100).toFixed(1) : 0;
+  const totalProfit = data.reduce((s,p) => s + (p.profit || 0), 0);
+  document.getElementById('summaryBar').innerHTML = `
+    <div class="card"><div class="card-label">전체 상품</div><div class="card-value">${total}</div></div>
+    <div class="card"><div class="card-label">업로드 완료</div><div class="card-value green">${uploaded}</div></div>
+    <div class="card"><div class="card-label">평균 마진율</div><div class="card-value blue">${avgMargin}%</div></div>
+    <div class="card"><div class="card-label">예상 총이익</div><div class="card-value">${totalProfit.toLocaleString()}원</div></div>
+  `;
+}
+
+function renderTable(data) {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  const rows = data
+    .filter(p => !q || p.title.toLowerCase().includes(q) || p.item_no.includes(q))
+    .sort((a,b) => {
+      const v = _sortAsc ? 1 : -1;
+      return a[_sortKey] > b[_sortKey] ? v : a[_sortKey] < b[_sortKey] ? -v : 0;
+    });
+
+  document.getElementById('productBody').innerHTML = rows.map(p => {
+    const pct = Math.min((p.margin_rate * 100), 60);
+    const cs = p.coupang_status || '';
+    const spid = p.seller_product_id || '';
+    let statusCell;
+    if (spid) {
+      const isSelling = cs === '승인완료';
+      statusCell = `
+        <select class="status-select" data-spid="${spid}"
+                onchange="onStatusChange(this)"
+                style="background:#1a1d2e;border:1px solid #2a2d3e;color:${isSelling?'#4ade80':'#fbbf24'};
+                       padding:3px 8px;border-radius:4px;font-size:12px;cursor:pointer;outline:none;">
+          <option value="판매중"   ${isSelling  ? 'selected' : ''}>판매중</option>
+          <option value="판매중지" ${!isSelling ? 'selected' : ''}>판매중지</option>
+        </select>`;
+    } else {
+      statusCell = `<span style="color:#555;font-size:12px">동기화 필요</span>`;
+    }
+    return `<tr>
+      <td style="color:#60a5fa;font-size:11px">${p.item_no}</td>
+      <td class="title-cell" title="${p.title}">${p.title}</td>
+      <td style="color:#888">${p.keyword}</td>
+      <td class="num">${p.buy_price.toLocaleString()}</td>
+      <td class="num">${p.sell_price.toLocaleString()}</td>
+      <td class="num" style="color:#22c55e">${p.profit.toLocaleString()}</td>
+      <td>
+        <div class="margin-bar">
+          <div class="margin-fill" style="width:${pct}px"></div>
+          <span class="margin-text">${(p.margin_rate*100).toFixed(1)}%</span>
+        </div>
+      </td>
+      <td>${statusCell}</td>
+    </tr>`;
+  }).join('');
+}
+
+function syncCoupang() {
+  const btn = document.getElementById('btnSync');
+  const msg = document.getElementById('syncMsg');
+  btn.disabled = true;
+  msg.textContent = '동기화 중...';
+  fetch('/api/coupang/sync', {method:'POST'})
+    .then(r => r.json())
+    .then(d => {
+      msg.textContent = d.error ? `오류: ${d.error}` : `${d.updated}개 업데이트`;
+      loadProducts();
+    })
+    .finally(() => { btn.disabled = false; });
+}
+
+function onStatusChange(sel) {
+  const spid = sel.dataset.spid;
+  const val = sel.value;
+  sel.disabled = true;
+  const prevColor = sel.style.color;
+  sel.style.color = '#888';
+
+  const url = val === '판매중지'
+    ? `/api/coupang/stop-sale/${spid}`
+    : `/api/coupang/start-sale/${spid}`;
+
+  fetch(url, {method:'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.success) {
+        loadProducts();
+      } else {
+        alert('실패: ' + d.error);
+        // 원래 값으로 복원
+        sel.value = val === '판매중지' ? '판매중' : '판매중지';
+        sel.style.color = prevColor;
+        sel.disabled = false;
+      }
+    });
+}
+
+function filterTable() { renderTable(_products); }
+function sortBy(key) {
+  _sortAsc = _sortKey === key ? !_sortAsc : false;
+  _sortKey = key;
+  renderTable(_products);
+}
+</script>
+</body>
+</html>
