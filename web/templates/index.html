@@ -126,13 +126,22 @@
 </header>
 
 <div class="tabs">
-  <div class="tab active" onclick="switchTab('pipeline')">파이프라인</div>
-  <div class="tab" onclick="switchTab('datalab')">데이터랩 분석</div>
+  <div class="tab active" onclick="switchTab('datalab')">데이터랩 분석</div>
+  <div class="tab" onclick="switchTab('pipeline')">파이프라인</div>
   <div class="tab" onclick="switchTab('products')">마진 / 상품</div>
 </div>
 
 <!-- 파이프라인 탭 -->
-<div id="panel-pipeline" class="panel active">
+<div id="panel-pipeline" class="panel">
+  <div style="background:#1a1d2e;border:1px solid #2a2d3e;border-radius:8px;padding:16px 20px;margin-bottom:20px;font-size:13px;line-height:1.9;color:#888;">
+    <div style="font-size:13px;font-weight:600;color:#fff;margin-bottom:10px;">파이프라인 동작 순서</div>
+    <div><span style="color:#2563eb;font-weight:600;">1. 키워드 분석</span> &nbsp;→&nbsp; <b style="color:#fff">파이프라인 실행</b> 버튼을 누르면 네이버 쇼핑 인사이트 분석 결과가 아래에 펼쳐집니다. 상승률 상위 <span style="color:#f59e0b">10개</span>가 자동 선정되며, 원하지 않는 키워드는 제외하고 <b style="color:#fff">크롤링 시작</b>을 누릅니다.</div>
+    <div><span style="color:#2563eb;font-weight:600;">2. 변형어 확장</span> &nbsp;→&nbsp; 선택한 키워드마다 수식어 조합 (목걸이형, 휴대용 등) → 검색량 검증 후 키워드당 최대 <span style="color:#f59e0b">5개</span> 롱테일 자동 추가.</div>
+    <div><span style="color:#2563eb;font-weight:600;">3. 도매꾹 수집</span> &nbsp;→&nbsp; 키워드별 도매꾹 상품 크롤링. 판매가 · 이미지 · 상세 정보 수집.</div>
+    <div><span style="color:#2563eb;font-weight:600;">4. 마진 계산</span> &nbsp;→&nbsp; 판매가×2.5배 기준, 쿠팡 수수료 + 부가세 10% 반영. 마진율 20% 미만 자동 제외.</div>
+    <div><span style="color:#2563eb;font-weight:600;">5. DB 저장</span> &nbsp;→&nbsp; 통과 상품을 SQLite에 저장. 중복 상품 자동 스킵.</div>
+    <div><span style="color:#2563eb;font-weight:600;">6. 쿠팡 업로드</span> &nbsp;→&nbsp; 쿠팡 WING API로 상품 등록. 결과는 <b style="color:#ccc">마진/상품</b> 탭에서 확인.</div>
+  </div>
   <div class="pipeline-header">
     <button class="btn-run" id="btnRun" onclick="analyzeTrending()">파이프라인 실행</button>
     <div class="status-dot" id="statusDot"></div>
@@ -152,7 +161,7 @@
 </div>
 
 <!-- 데이터랩 분석 탭 -->
-<div id="panel-datalab" class="panel">
+<div id="panel-datalab" class="panel active">
   <div class="dl-header">
     <button class="btn-run" id="btnDl" onclick="loadDatalab()">분석 시작</button>
     <span class="dl-period" id="dlPeriod"></span>
@@ -194,7 +203,7 @@ let _sortAsc = false;
 let _es = null;
 
 function switchTab(name) {
-  const tabs = ['pipeline', 'datalab', 'products'];
+  const tabs = ['datalab', 'pipeline', 'products'];
   document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', tabs[i] === name));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
