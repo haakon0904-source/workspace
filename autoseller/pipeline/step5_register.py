@@ -17,24 +17,35 @@ from pathlib import Path
 def _init_db(conn: sqlite3.Connection):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS products (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            source      TEXT NOT NULL,
-            keyword     TEXT NOT NULL,
-            item_no     TEXT NOT NULL,
-            title       TEXT NOT NULL,
-            buy_price   INTEGER NOT NULL,
-            sell_price  INTEGER NOT NULL,
-            profit      INTEGER NOT NULL,
-            margin_rate REAL NOT NULL,
-            min_qty     INTEGER DEFAULT 1,
-            img_url     TEXT,
-            delivery    TEXT,
-            status      TEXT DEFAULT 'pending',  -- pending / uploaded / failed
-            created_at  TEXT NOT NULL,
-            updated_at  TEXT NOT NULL,
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            source             TEXT NOT NULL,
+            keyword            TEXT NOT NULL,
+            item_no            TEXT NOT NULL,
+            title              TEXT NOT NULL,
+            buy_price          INTEGER NOT NULL,
+            sell_price         INTEGER NOT NULL,
+            profit             INTEGER NOT NULL,
+            margin_rate        REAL NOT NULL,
+            min_qty            INTEGER DEFAULT 1,
+            img_url            TEXT,
+            delivery           TEXT,
+            status             TEXT DEFAULT 'pending',  -- pending / uploaded / upload_failed
+            seller_product_id  TEXT,                   -- 쿠팡 sellerProductId
+            coupang_status     TEXT,                   -- 쿠팡 실제 상태 (승인완료/임시저장 등)
+            created_at         TEXT NOT NULL,
+            updated_at         TEXT NOT NULL,
             UNIQUE(source, item_no)
         )
     """)
+    # 기존 DB 컬럼 마이그레이션
+    for col, definition in [
+        ("seller_product_id", "TEXT"),
+        ("coupang_status",    "TEXT"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE products ADD COLUMN {col} {definition}")
+        except Exception:
+            pass
     conn.commit()
 
 

@@ -179,6 +179,55 @@ def upload(product: dict, config: dict) -> dict:
         return {"success": False, "product_id": "", "error": f"{resp.status_code}: {msg}"}
 
 
+def stop_sale(seller_product_id: int, config: dict) -> dict:
+    """
+    상품 판매중지.
+    GET → items[].saleStatus = STOP_SELLING → PUT /seller-products
+    Returns: {"success": bool, "error": str}
+    """
+    path = f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}"
+    resp = _request("GET", path, config)
+    data = resp.json()
+    if data.get("code") != "SUCCESS":
+        return {"success": False, "error": data.get("message", "조회 실패")}
+
+    product = data["data"]
+    for item in product.get("items", []):
+        item["saleStatus"] = "STOP_SELLING"
+
+    put_path = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
+    r2 = _request("PUT", put_path, config, body=product)
+    d2 = r2.json()
+    if d2.get("code") == "SUCCESS":
+        return {"success": True, "error": ""}
+    return {"success": False, "error": d2.get("message", "판매중지 실패")}
+
+
+def fetch_all_products(config: dict) -> list:
+    """
+    쿠팡에 등록된 전체 상품 목록 조회.
+    Returns: list of {sellerProductId, sellerProductName, statusName, externalVendorSku}
+    """
+    vendor_id = config["coupang_vendor_id"]
+    result = []
+    for status in ("APPROVED", "DRAFT", "UNDER_REVIEW"):
+        path = (f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
+                f"?vendorId={vendor_id}&maxPerPage=100&status={status}")
+        resp = _request("GET", path, config)
+        data = resp.json()
+        if data.get("code") == "SUCCESS":
+            for p in data.get("data", []):
+                sku = ""
+                if p.get("items"):
+                    sku = p["items"][0].get("externalVendorSku", "")
+                result.append({
+                    "seller_product_id": p["sellerProductId"],
+                    "coupang_status": p.get("statusName", ""),
+                    "item_no": sku,
+                })
+    return result
+
+
 def fetch_category_commission(category_code: int, config: dict) -> float:
     """
     쿠팡 카테고리 수수료율 조회.

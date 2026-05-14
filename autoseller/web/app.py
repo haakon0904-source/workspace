@@ -138,13 +138,101 @@ def api_products():
     cur = conn.cursor()
     cur.execute("""
         SELECT item_no, title, keyword, buy_price, sell_price,
-               profit, margin_rate, status, created_at
+               profit, margin_rate, status, seller_product_id, coupang_status, created_at
         FROM products
         ORDER BY created_at DESC
     """)
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return jsonify(rows)
+
+
+@app.route("/api/coupang/sync", methods=["POST"])
+def api_coupang_sync():
+    """쿠팡 상품 상태를 DB에 동기화."""
+    try:
+        from run_pipeline import CONFIG
+        from uploader.coupang import fetch_all_products
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    if not DB_PATH.exists():
+        return jsonify({"error": "DB 없음"}), 400
+
+    products = fetch_all_products(CONFIG)
+    if not products:
+        return jsonify({"updated": 0})
+
+    conn = sqlite3.connect(DB_PATH)
+    updated = 0
+    for p in products:
+        cur = conn.execute(
+            "UPDATE products SET seller_product_id=?, coupang_status=?, updated_at=datetime('now') "
+            "WHERE item_no=?",
+            (str(p["seller_product_id"]), p["coupang_status"], p["item_no"]),
+        )
+        updated += cur.rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({"updated": updated, "total": len(products)})
+
+
+@app.route("/api/coupang/stop-sale/<seller_product_id>", methods=["POST"])
+def api_stop_sale(seller_product_id):
+    """상품 판매중지."""
+    try:
+        from run_pipeline import CONFIG
+        from uploader.coupang import stop_sale
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    result = stop_sale(int(seller_product_id), CONFIG)
+    if result["success"] and DB_PATH.exists():
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "UPDATE products SET coupang_status='임시저장', updated_at=datetime('now') "
+            "WHERE seller_product_id=?",
+            (seller_product_id,),
+        )
+        conn.commit()
+        conn.close()
+    return jsonify(result)
+
+
+@app.route("/api/coupang/start-sale/<seller_product_id>", methods=["POST"])
+def api_start_sale(seller_product_id):
+    """상품 판매 재개 (임시저장 → 승인 요청)."""
+    try:
+        from run_pipeline import CONFIG
+        from uploader.coupang import _request
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    path = f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}"
+    resp = _request("GET", path, CONFIG)
+    data = resp.json()
+    if data.get("code") != "SUCCESS":
+        return jsonify({"success": False, "error": data.get("message", "조회 실패")})
+
+    product = data["data"]
+    for item in product.get("items", []):
+        item["saleStatus"] = "ON_SALE"
+    product["requested"] = True
+
+    r2 = _request("PUT", "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products", CONFIG, body=product)
+    d2 = r2.json()
+    if d2.get("code") == "SUCCESS":
+        if DB_PATH.exists():
+            conn = sqlite3.connect(DB_PATH)
+            conn.execute(
+                "UPDATE products SET coupang_status='승인완료', updated_at=datetime('now') "
+                "WHERE seller_product_id=?",
+                (seller_product_id,),
+            )
+            conn.commit()
+            conn.close()
+        return jsonify({"success": True, "error": ""})
+    return jsonify({"success": False, "error": d2.get("message", "판매재개 실패")})
 
 
 if __name__ == "__main__":
