@@ -116,12 +116,21 @@ async def _fetch_list_page(page, keyword, pg):
     return await page.evaluate(_EXTRACT_JS)
 
 
-async def _fetch_detail(page, item_no):
-    await page.goto(f"https://domeggook.com/{item_no}", wait_until="domcontentloaded", timeout=60000)
-    await page.wait_for_selector("#lThumbImg", timeout=10000)
-    detail = await page.evaluate(_DETAIL_JS)
-    detail["itemNo"] = item_no
-    return detail
+async def _fetch_detail(page, item_no, retries=3):
+    for attempt in range(retries):
+        try:
+            await page.goto(f"https://domeggook.com/{item_no}", wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_selector("#lThumbImg", timeout=10000)
+            detail = await page.evaluate(_DETAIL_JS)
+            detail["itemNo"] = item_no
+            return detail
+        except Exception as e:
+            if attempt < retries - 1:
+                print(f"[step3]   재시도 {attempt+1}/{retries-1} ({item_no}): {e.__class__.__name__}")
+                await asyncio.sleep(3)
+            else:
+                print(f"[step3]   실패 스킵 ({item_no}): {e.__class__.__name__}")
+                return {"itemNo": item_no, "imgSrc": "", "thumbImgs": [], "priceNum": 0, "minQty": 1, "delivery": "", "title": ""}
 
 
 async def _search_keyword(page, keyword, max_pages, fetch_detail):
@@ -129,15 +138,18 @@ async def _search_keyword(page, keyword, max_pages, fetch_detail):
     total_pages = 1
 
     for pg in range(1, max_pages + 1):
+        print(f"[step3]   목록 {pg}페이지 크롤링 중...")
         items = await _fetch_list_page(page, keyword, pg)
 
         if pg == 1:
             total_pages = await page.evaluate(_TOTAL_PAGES_JS)
+            print(f"[step3]   총 {total_pages}페이지")
 
         if not items:
             break
 
         products.extend(items)
+        print(f"[step3]   {pg}/{total_pages}p 완료 ({len(items)}개, 누적 {len(products)}개)")
 
         if pg >= total_pages:
             break
@@ -163,7 +175,9 @@ async def _search_keyword(page, keyword, max_pages, fetch_detail):
         ]
 
     result = []
-    for p in unique:
+    total = len(unique)
+    for i, p in enumerate(unique, 1):
+        print(f"[step3]   상세 {i}/{total} ({p['itemNo']})...")
         detail = await _fetch_detail(page, p["itemNo"])
         result.append({
             "source": "domeggook",
