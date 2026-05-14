@@ -50,6 +50,25 @@ def _request(method, path, config, body=None):
     return resp
 
 
+def _build_contents(product: dict) -> list:
+    """도매꾹 이미지를 쿠팡 상세설명(contents)으로 변환."""
+    imgs = product.get("thumb_imgs") or []
+    if not imgs and product.get("img_url"):
+        imgs = [product["img_url"]]
+    return [
+        {
+            "contentsType": "IMAGE_NO_SPACE",
+            "contentDetails": [{"content": url, "detailType": "IMAGE"}],
+        }
+        for url in imgs
+    ] if imgs else [
+        {
+            "contentsType": "TEXT",
+            "contentDetails": [{"content": product.get("title", "상품"), "detailType": "TEXT"}],
+        }
+    ]
+
+
 _NOTICES = [
     {"noticeCategoryName": "패션잡화(모자/벨트/액세서리 등)", "noticeCategoryDetailName": n, "content": "상품 상세페이지 참조"}
     for n in ["종류", "소재", "치수", "제조자(수입자)", "제조국", "취급시 주의사항", "품질보증기준", "A/S 책임자와 전화번호"]
@@ -73,7 +92,7 @@ def _build_product_payload(product: dict, config: dict) -> dict:
     outbound_code = config.get("coupang_outbound_place_code", 24710683)
     return_center = config.get("coupang_return_center_code", "1002607180")
     ra = config.get("coupang_return_address", {})
-    category = config.get("coupang_display_category", 69884)
+    category = product.get("display_category") or config.get("coupang_display_category", 69884)
 
     sell_price = product.get("sell_price", 0)
     free_ship = sell_price >= 30000
@@ -106,6 +125,7 @@ def _build_product_payload(product: dict, config: dict) -> dict:
         "returnAddress": ra.get("address", ""),
         "returnAddressDetail": ra.get("address_detail", ""),
         "returnCharge": 3000,
+        "requested": True,
         "vendorUserId": vendor_user_id,
         "items": [
             {
@@ -124,7 +144,7 @@ def _build_product_payload(product: dict, config: dict) -> dict:
                 "unitCount": 1,
                 "overseasPurchased": "NOT_OVERSEAS_PURCHASED",
                 "parallelImported": "NOT_PARALLEL_IMPORTED",
-                "contents": [],
+                "contents": _build_contents(product),
                 "notices": _NOTICES,
                 "attributes": [{"attributeTypeName": "색상", "attributeValueName": "기타"}],
                 "images": images,
@@ -157,6 +177,23 @@ def upload(product: dict, config: dict) -> dict:
     else:
         msg = data.get("message") or resp.text[:300]
         return {"success": False, "product_id": "", "error": f"{resp.status_code}: {msg}"}
+
+
+def fetch_category_commission(category_code: int, config: dict) -> float:
+    """
+    쿠팡 카테고리 수수료율 조회.
+    Returns: float (예: 0.108), 실패 시 config['commission_rate'] 반환
+    """
+    path = f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-categories/{category_code}"
+    resp = _request("GET", path, config)
+    try:
+        data = resp.json()
+        rate = data.get("data", {}).get("commissionRate")
+        if rate is not None:
+            return float(rate) / 100  # 퍼센트 → 소수
+    except Exception:
+        pass
+    return config.get("commission_rate", 0.1)
 
 
 def run(products: list, config: dict) -> list:

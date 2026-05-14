@@ -5,10 +5,18 @@ Step 4: 마진 계산
 
 config 필수 키:
     sell_price_multiplier  float  도매가 대비 판매가 배수 (예: 2.5 → 250%)
-    commission_rate        float  플랫폼 수수료율 (예: 0.1 → 10%)
-    delivery_fee           int    배송비 (원, 예: 3000)
+    commission_rate        float  플랫폼 수수료율 (예: 0.078 → 7.8%)
+    delivery_fee           int    나의 배송비 (원, 예: 2500)
+    vat_rate               float  부가세율 (기본 0.1 → 10%)
     min_margin_rate        float  최소 마진율 (예: 0.2 → 20%)
     min_profit             int    최소 순이익 (원, 예: 1000)
+
+마진 공식 (돈버는하마 마진계산기 기준):
+    수수료      = 판매가 × 수수료율
+    세전이익    = 판매가 - 원가 - 배송비 - 수수료
+    부가세      = 세전이익 × 부가세율(10%)
+    순이익(마진) = 세전이익 - 부가세  (= 세전이익 × 0.9)
+    마진율      = 순이익 / 판매가
 """
 
 
@@ -16,20 +24,32 @@ def _calc(product: dict, config: dict) -> dict:
     """상품 1개 마진 계산. 결과 필드 추가한 dict 반환."""
     buy_price = product["price"]           # 도매가
     multiplier = config["sell_price_multiplier"]
-    commission = config["commission_rate"]
     delivery = config["delivery_fee"]
+    vat_rate = config.get("vat_rate", 0.1)
 
-    sell_price = int(buy_price * multiplier)
-    commission_fee = int(sell_price * commission)
-    profit = sell_price - buy_price - commission_fee - delivery
+    # 키워드별 수수료율·카테고리 코드
+    keyword_rates = config.get("keyword_commission_rates", {})
+    commission = keyword_rates.get(product.get("keyword"), config.get("commission_rate", 0.1))
+    display_category = config.get("keyword_display_categories", {}).get(
+        product.get("keyword"), config.get("coupang_display_category", 69884)
+    )
+
+    sell_price = int(buy_price * multiplier / 10) * 10  # 10원 단위 절사
+    commission_fee = sell_price * commission
+    pre_tax = sell_price - buy_price - delivery - commission_fee
+    vat = pre_tax * vat_rate
+    profit = pre_tax - vat                 # = pre_tax * (1 - vat_rate)
     margin_rate = profit / sell_price if sell_price > 0 else 0
 
     return {
         **product,
         "sell_price": sell_price,
-        "commission_fee": commission_fee,
+        "display_category": display_category,
+        "commission_rate": commission,
+        "commission_fee": round(commission_fee),
         "delivery_fee": delivery,
-        "profit": profit,
+        "vat": round(vat),
+        "profit": round(profit),
         "margin_rate": round(margin_rate, 4),
     }
 
