@@ -146,8 +146,11 @@ def api_trending():
     prev_start, prev_end = _date_range(weeks, weeks)
 
     recent_ratios, prev_ratios = {}, {}
-    for _, info in SEED_KEYWORDS.items():
+    kw_category = {}
+    for cat_name, info in SEED_KEYWORDS.items():
         cat_code = info["category"]
+        for kw in info["keywords"]:
+            kw_category[kw] = cat_name
         for chunk in _chunk_list(info["keywords"], 5):
             try:
                 recent_ratios.update(_query_shopping_insight(cat_code, chunk, recent_start, recent_end, CONFIG))
@@ -164,12 +167,22 @@ def api_trending():
     keywords = []
     for kw, score in sorted_kws:
         ratio = recent_ratios.get(kw, 0)
+        prev = prev_ratios.get(kw, 0)
         trend = "▲" if score > 0.05 else ("▼" if score < -0.05 else "─")
-        keywords.append({"keyword": kw, "ratio": round(ratio, 1), "score": round(score * 100, 1), "trend": trend})
+        keywords.append({
+            "keyword": kw,
+            "category": kw_category.get(kw, "-"),
+            "ratio": round(ratio, 1),
+            "prev_ratio": round(prev, 1),
+            "score": round(score * 100, 1),
+            "trend": trend,
+        })
 
+    categories = list(dict.fromkeys(kw_category[k["keyword"]] for k in keywords if k["keyword"] in kw_category))
     return jsonify({
         "keywords": keywords,
         "top": [k["keyword"] for k in keywords[:top_n]],
+        "categories": categories,
         "period": {"recent": f"{recent_start} ~ {recent_end}", "prev": f"{prev_start} ~ {prev_end}"},
     })
 
