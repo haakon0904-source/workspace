@@ -72,6 +72,26 @@
   .btn-stop:hover { background: #450a0a; }
   .btn-sync { background: #1a1d2e; border: 1px solid #2a2d3e; color: #888; padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; }
   .btn-sync:hover { border-color: #60a5fa; color: #60a5fa; }
+
+  /* Keyword panel */
+  .keyword-panel { background: #1a1d2e; border: 1px solid #2a2d3e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+  .keyword-panel h3 { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+  .kw-period { font-size: 11px; color: #555; margin-bottom: 16px; }
+  .kw-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 16px; }
+  .kw-table th { color: #555; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; padding: 6px 10px; text-align: left; border-bottom: 1px solid #2a2d3e; }
+  .kw-table td { padding: 8px 10px; border-bottom: 1px solid #151820; color: #c0c0c0; }
+  .kw-table tr:hover td { background: #0f1117; }
+  .trend-up { color: #22c55e; font-weight: 600; }
+  .trend-down { color: #ef4444; }
+  .trend-flat { color: #888; }
+  .kw-actions { display: flex; gap: 12px; align-items: center; }
+  .btn-crawl { background: #16a34a; color: #fff; border: none; padding: 10px 24px; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 500; }
+  .btn-crawl:hover { background: #15803d; }
+  .btn-cancel-kw { background: none; border: 1px solid #374151; color: #888; padding: 10px 18px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+  .btn-cancel-kw:hover { border-color: #6b7280; color: #ccc; }
+  .kw-selected-count { font-size: 13px; color: #888; }
+  .kw-loading { color: #60a5fa; font-size: 13px; padding: 20px 0; text-align: center; }
+  .kw-checkbox { accent-color: #2563eb; width: 14px; height: 14px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -89,10 +109,20 @@
 <!-- 파이프라인 탭 -->
 <div id="panel-pipeline" class="panel active">
   <div class="pipeline-header">
-    <button class="btn-run" id="btnRun" onclick="runPipeline()">파이프라인 실행</button>
+    <button class="btn-run" id="btnRun" onclick="analyzeTrending()">파이프라인 실행</button>
     <div class="status-dot" id="statusDot"></div>
     <span class="status-text" id="statusText">대기 중</span>
   </div>
+
+  <!-- 트렌딩 키워드 패널 (분석 후 표시) -->
+  <div id="kwPanel" style="display:none">
+    <div class="keyword-panel">
+      <h3>트렌딩 키워드 분석 결과</h3>
+      <div class="kw-period" id="kwPeriod"></div>
+      <div id="kwContent"><div class="kw-loading">분석 중...</div></div>
+    </div>
+  </div>
+
   <div class="log-box" id="logBox"></div>
 </div>
 
@@ -136,12 +166,108 @@ function switchTab(name) {
 }
 
 /* ── Pipeline ── */
-function runPipeline() {
-  fetch('/api/pipeline/run', {method:'POST'})
+let _trendingKeywords = [];
+
+function analyzeTrending() {
+  if (_status.running) { alert('이미 실행 중입니다.'); return; }
+  const btn = document.getElementById('btnRun');
+  btn.disabled = true;
+  btn.textContent = '분석 중...';
+  document.getElementById('kwPanel').style.display = 'block';
+  document.getElementById('kwContent').innerHTML = '<div class="kw-loading">네이버 쇼핑 인사이트 분석 중...</div>';
+  document.getElementById('kwPeriod').textContent = '';
+
+  fetch('/api/pipeline/trending', {method:'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) {
+        document.getElementById('kwContent').innerHTML = `<div style="color:#ef4444;padding:16px">${d.error}</div>`;
+        btn.disabled = false;
+        btn.textContent = '파이프라인 실행';
+        return;
+      }
+      _trendingKeywords = d.keywords;
+      const top = d.top || [];
+      document.getElementById('kwPeriod').textContent =
+        d.no_api ? 'API 키 미설정 — 수동 키워드 사용' :
+        `최근: ${d.period.recent}  /  이전: ${d.period.prev}`;
+
+      const rows = _trendingKeywords.map((k, i) => {
+        const checked = top.includes(k.keyword) ? 'checked' : '';
+        const tc = k.trend === '▲' ? 'trend-up' : k.trend === '▼' ? 'trend-down' : 'trend-flat';
+        const scoreStr = d.no_api ? '-' : (k.score >= 0 ? `+${k.score}%` : `${k.score}%`);
+        const ratioStr = d.no_api ? '-' : k.ratio;
+        return `<tr>
+          <td><input type="checkbox" class="kw-checkbox" id="kw${i}" value="${k.keyword}" ${checked} onchange="updateCount()"></td>
+          <td><label for="kw${i}" style="cursor:pointer">${k.keyword}</label></td>
+          <td>${ratioStr}</td>
+          <td class="${tc}">${k.trend} ${scoreStr}</td>
+        </tr>`;
+      }).join('');
+
+      document.getElementById('kwContent').innerHTML = `
+        <table class="kw-table">
+          <thead><tr>
+            <th><input type="checkbox" class="kw-checkbox" id="kwAll" checked onchange="toggleAll(this)"></th>
+            <th>키워드</th>
+            <th>쇼핑 검색비율</th>
+            <th>트렌드</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="kw-actions">
+          <button class="btn-crawl" onclick="startCrawl()">크롤링 시작 (<span id="kwCount">${top.length}</span>개 키워드)</button>
+          <button class="btn-cancel-kw" onclick="cancelKeyword()">취소</button>
+          <span class="kw-selected-count" id="kwCountLabel"></span>
+        </div>`;
+
+      btn.disabled = false;
+      btn.textContent = '다시 분석';
+    })
+    .catch(e => {
+      document.getElementById('kwContent').innerHTML = `<div style="color:#ef4444;padding:16px">오류: ${e}</div>`;
+      btn.disabled = false;
+      btn.textContent = '파이프라인 실행';
+    });
+}
+
+function toggleAll(master) {
+  document.querySelectorAll('.kw-checkbox:not(#kwAll)').forEach(cb => cb.checked = master.checked);
+  updateCount();
+}
+
+function updateCount() {
+  const n = getSelectedKeywords().length;
+  const el = document.getElementById('kwCount');
+  if (el) el.textContent = n;
+  const allCb = document.getElementById('kwAll');
+  const total = document.querySelectorAll('.kw-checkbox:not(#kwAll)').length;
+  if (allCb) allCb.checked = (n === total);
+}
+
+function getSelectedKeywords() {
+  return Array.from(document.querySelectorAll('.kw-checkbox:not(#kwAll):checked')).map(cb => cb.value);
+}
+
+function cancelKeyword() {
+  document.getElementById('kwPanel').style.display = 'none';
+  document.getElementById('btnRun').textContent = '파이프라인 실행';
+}
+
+function startCrawl() {
+  const keywords = getSelectedKeywords();
+  if (!keywords.length) { alert('키워드를 하나 이상 선택하세요.'); return; }
+  fetch('/api/pipeline/run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({keywords}),
+  })
     .then(r => r.json())
     .then(d => {
       if (d.error) { alert(d.error); return; }
       document.getElementById('logBox').innerHTML = '';
+      document.getElementById('kwPanel').style.display = 'none';
+      document.getElementById('btnRun').textContent = '다시 분석';
       startStream();
       setRunning(true);
     });
@@ -171,13 +297,16 @@ function appendLog(msg) {
 }
 
 function setRunning(on) {
+  _status.running = on;
   document.getElementById('btnRun').disabled = on;
   document.getElementById('statusDot').className = 'status-dot' + (on ? ' running' : '');
   document.getElementById('statusText').textContent = on ? '실행 중...' : '완료';
 }
 
 // 페이지 로드 시 실행 중이면 스트림 연결
+let _status = {running: false};
 fetch('/api/pipeline/status').then(r=>r.json()).then(d => {
+  _status = d;
   if (d.running) { setRunning(true); startStream(); }
 });
 

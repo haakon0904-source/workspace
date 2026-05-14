@@ -11,7 +11,7 @@ import sys
 import threading
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template
+from flask import Flask, Response, jsonify, render_template, request
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -41,38 +41,66 @@ class _Tee:
         self._orig.flush()
 
 
-def _run_pipeline():
+def _run_pipeline(keywords=None):
     _status["running"] = True
     old_stdout = sys.stdout
     sys.stdout = _Tee(old_stdout, _log_queue)
     try:
-        from run_pipeline import CONFIG, KEYWORDS, _resolve_keyword_config
-        from pipeline import step3_product_search, step4_margin, step5_register, step6_upload
+        from run_pipeline import CONFIG, KEYWORDS, KEYWORD_CATEGORIES, _resolve_keyword_config
+        from pipeline import (
+            step2_keyword_variations,
+            step3_product_search, step4_margin, step5_register, step6_upload,
+        )
 
         _log_queue.put("=" * 50)
         _log_queue.put("AutoSeller 파이프라인 시작")
         _log_queue.put("=" * 50)
 
-        _log_queue.put("[Config] 카테고리별 수수료율 조회")
+        kws = keywords or KEYWORDS
+
+        # Step 2: 변형어 확장 (네이버 API 키 있을 때)
+        if keywords and CONFIG.get("naver_client_id"):
+            _log_queue.put(f"\n[Step 2] 변형어 생성 + 검색량 검증 ({len(keywords)}개 키워드)")
+            for kw in keywords:
+                if kw not in KEYWORD_CATEGORIES:
+                    KEYWORD_CATEGORIES[kw] = {
+                        "display_category": CONFIG.get("coupang_display_category", 69884),
+                        "commission": ("생활/건강",),
+                    }
+            kws = step2_keyword_variations.run(keywords, CONFIG)
+            for kw in kws:
+                if kw not in KEYWORD_CATEGORIES:
+                    KEYWORD_CATEGORIES[kw] = {
+                        "display_category": CONFIG.get("coupang_display_category", 69884),
+                        "commission": ("생활/건강",),
+                    }
+        else:
+            _log_queue.put("\n[Step 2] 생략 (API 키 없음 또는 수동 키워드)")
+
+        _log_queue.put("\n[Config] 카테고리별 수수료율 조회")
         commission_rates, display_categories = _resolve_keyword_config(CONFIG)
         CONFIG["keyword_commission_rates"] = commission_rates
         CONFIG["keyword_display_categories"] = display_categories
 
-        products = step3_product_search.run(KEYWORDS, CONFIG)
+        _log_queue.put("\n[Step 3] 도매꾹 상품 수집")
+        products = step3_product_search.run(kws, CONFIG)
         if not products:
             _log_queue.put("수집된 상품 없음. 종료.")
             return
 
+        _log_queue.put("\n[Step 4] 마진 계산")
         products = step4_margin.run(products, CONFIG)
         if not products:
             _log_queue.put("마진 기준 통과 상품 없음. 종료.")
             return
 
+        _log_queue.put("\n[Step 5] DB 저장 + 하네스 검증")
         products = step5_register.run(products, CONFIG)
         if not products:
             _log_queue.put("하네스 통과 상품 없음. 종료.")
             return
 
+        _log_queue.put("\n[Step 6] 쿠팡 업로드")
         results = step6_upload.run(products, CONFIG)
         success = [r for r in results if r.get("success")]
         _log_queue.put("=" * 50)
@@ -92,6 +120,60 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/pipeline/trending", methods=["POST"])
+def api_trending():
+    """Step1: 트렌딩 키워드 분석 결과 반환 (JSON)."""
+    try:
+        from run_pipeline import CONFIG
+        from pipeline.step1_trending_keywords import (
+            SEED_KEYWORDS, _date_range, _query_shopping_insight, _chunk_list,
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    if not CONFIG.get("naver_client_id"):
+        from run_pipeline import KEYWORDS
+        return jsonify({
+            "keywords": [{"keyword": kw, "ratio": 0, "score": 0, "trend": "─"} for kw in KEYWORDS],
+            "top": KEYWORDS,
+            "period": {"recent": "-", "prev": "-"},
+            "no_api": True,
+        })
+
+    weeks = CONFIG.get("trend_weeks", 4)
+    top_n = CONFIG.get("trend_top_n", 10)
+    recent_start, recent_end = _date_range(0, weeks)
+    prev_start, prev_end = _date_range(weeks, weeks)
+
+    recent_ratios, prev_ratios = {}, {}
+    for _, info in SEED_KEYWORDS.items():
+        cat_code = info["category"]
+        for chunk in _chunk_list(info["keywords"], 5):
+            try:
+                recent_ratios.update(_query_shopping_insight(cat_code, chunk, recent_start, recent_end, CONFIG))
+                prev_ratios.update(_query_shopping_insight(cat_code, chunk, prev_start, prev_end, CONFIG))
+            except Exception:
+                pass
+
+    scores = {}
+    for kw, recent in recent_ratios.items():
+        prev = prev_ratios.get(kw, 0)
+        scores[kw] = (recent - prev) / prev if prev > 0 else recent
+
+    sorted_kws = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    keywords = []
+    for kw, score in sorted_kws:
+        ratio = recent_ratios.get(kw, 0)
+        trend = "▲" if score > 0.05 else ("▼" if score < -0.05 else "─")
+        keywords.append({"keyword": kw, "ratio": round(ratio, 1), "score": round(score * 100, 1), "trend": trend})
+
+    return jsonify({
+        "keywords": keywords,
+        "top": [k["keyword"] for k in keywords[:top_n]],
+        "period": {"recent": f"{recent_start} ~ {recent_end}", "prev": f"{prev_start} ~ {prev_end}"},
+    })
+
+
 @app.route("/api/pipeline/run", methods=["POST"])
 def api_run():
     if _status["running"]:
@@ -101,7 +183,9 @@ def api_run():
             _log_queue.get_nowait()
         except queue.Empty:
             break
-    threading.Thread(target=_run_pipeline, daemon=True).start()
+    data = request.get_json(silent=True) or {}
+    keywords = data.get("keywords") or None
+    threading.Thread(target=_run_pipeline, args=(keywords,), daemon=True).start()
     return jsonify({"ok": True})
 
 
