@@ -144,6 +144,7 @@
   </div>
   <div class="pipeline-header">
     <button class="btn-run" id="btnRun" onclick="analyzeTrending()">파이프라인 실행</button>
+    <button id="btnStop" onclick="stopPipeline()" style="display:none;background:none;border:1px solid #ef4444;color:#ef4444;padding:9px 20px;border-radius:6px;font-size:14px;cursor:pointer;">크롤링 중단</button>
     <div class="status-dot" id="statusDot"></div>
     <span class="status-text" id="statusText">대기 중</span>
   </div>
@@ -346,7 +347,10 @@ function analyzeTrending() {
         <div class="kw-actions">
           <button class="btn-crawl" onclick="startCrawl()">크롤링 시작 (<span id="kwCount">${top.length}</span>개 키워드)</button>
           <button class="btn-cancel-kw" onclick="cancelKeyword()">취소</button>
-          <span class="kw-selected-count" id="kwCountLabel"></span>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:#888;margin-left:8px;">
+            <input type="checkbox" id="useVariations" checked style="accent-color:#2563eb;width:14px;height:14px;">
+            변형어 자동 확장 (키워드당 최대 5개 추가)
+          </label>
         </div>`;
 
       btn.disabled = false;
@@ -385,10 +389,11 @@ function cancelKeyword() {
 function startCrawl() {
   const keywords = getSelectedKeywords();
   if (!keywords.length) { alert('키워드를 하나 이상 선택하세요.'); return; }
+  const useVariations = document.getElementById('useVariations')?.checked ?? true;
   fetch('/api/pipeline/run', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({keywords}),
+    body: JSON.stringify({keywords, use_variations: useVariations}),
   })
     .then(r => r.json())
     .then(d => {
@@ -427,8 +432,16 @@ function appendLog(msg) {
 function setRunning(on) {
   _status.running = on;
   document.getElementById('btnRun').disabled = on;
+  document.getElementById('btnStop').style.display = on ? 'inline-block' : 'none';
   document.getElementById('statusDot').className = 'status-dot' + (on ? ' running' : '');
   document.getElementById('statusText').textContent = on ? '실행 중...' : '완료';
+}
+
+function stopPipeline() {
+  fetch('/api/pipeline/stop', {method: 'POST'});
+  document.getElementById('btnStop').disabled = true;
+  document.getElementById('btnStop').textContent = '중단 중...';
+  document.getElementById('statusText').textContent = '중단 요청됨...';
 }
 
 // 페이지 로드 시 실행 중이면 스트림 연결

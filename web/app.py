@@ -22,6 +22,7 @@ DB_PATH = ROOT / "db" / "autoseller.db"
 
 _status = {"running": False}
 _log_queue = queue.Queue()
+_stop_event = threading.Event()
 
 
 class _Tee:
@@ -41,7 +42,7 @@ class _Tee:
         self._orig.flush()
 
 
-def _run_pipeline(keywords=None):
+def _run_pipeline(keywords=None, use_variations=True):
     _status["running"] = True
     old_stdout = sys.stdout
     sys.stdout = _Tee(old_stdout, _log_queue)
@@ -58,8 +59,8 @@ def _run_pipeline(keywords=None):
 
         kws = keywords or KEYWORDS
 
-        # Step 2: 변형어 확장 (네이버 API 키 있을 때)
-        if keywords and CONFIG.get("naver_client_id"):
+        # Step 2: 변형어 확장 (네이버 API 키 있을 때 + use_variations=True)
+        if keywords and use_variations and CONFIG.get("naver_client_id"):
             _log_queue.put(f"\n[Step 2] 변형어 생성 + 검색량 검증 ({len(keywords)}개 키워드)")
             for kw in keywords:
                 if kw not in KEYWORD_CATEGORIES:
@@ -75,7 +76,8 @@ def _run_pipeline(keywords=None):
                         "commission": ("생활/건강",),
                     }
         else:
-            _log_queue.put("\n[Step 2] 생략 (API 키 없음 또는 수동 키워드)")
+            reason = "변형어 확장 OFF" if not use_variations else ("API 키 없음" if not CONFIG.get("naver_client_id") else "수동 키워드")
+            _log_queue.put(f"\n[Step 2] 생략 ({reason})")
 
         _log_queue.put("\n[Config] 카테고리별 수수료율 조회")
         commission_rates, display_categories = _resolve_keyword_config(CONFIG)
@@ -83,7 +85,12 @@ def _run_pipeline(keywords=None):
         CONFIG["keyword_display_categories"] = display_categories
 
         _log_queue.put("\n[Step 3] 도매꾹 상품 수집")
-        products = step3_product_search.run(kws, CONFIG)
+        products = []
+        for kw in kws:
+            if _stop_event.is_set():
+                _log_queue.put("[중단] 사용자 요청으로 크롤링 중단됨")
+                break
+            products.extend(step3_product_search.run([kw], CONFIG))
         if not products:
             _log_queue.put("수집된 상품 없음. 종료.")
             return
@@ -196,9 +203,17 @@ def api_run():
             _log_queue.get_nowait()
         except queue.Empty:
             break
+    _stop_event.clear()
     data = request.get_json(silent=True) or {}
     keywords = data.get("keywords") or None
-    threading.Thread(target=_run_pipeline, args=(keywords,), daemon=True).start()
+    use_variations = data.get("use_variations", True)
+    threading.Thread(target=_run_pipeline, args=(keywords, use_variations), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/pipeline/stop", methods=["POST"])
+def api_stop():
+    _stop_event.set()
     return jsonify({"ok": True})
 
 
