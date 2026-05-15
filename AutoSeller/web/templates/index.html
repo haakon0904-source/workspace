@@ -93,6 +93,23 @@
   .kw-loading { color: #60a5fa; font-size: 13px; padding: 20px 0; text-align: center; }
   .kw-checkbox { accent-color: #2563eb; width: 14px; height: 14px; cursor: pointer; }
 
+  /* 주문 관리 탭 */
+  .order-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .btn-order-run { background: #7c3aed; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 500; }
+  .btn-order-run:hover { background: #6d28d9; }
+  .btn-order-run:disabled { background: #374151; cursor: not-allowed; }
+  .order-summary { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+  .chip-order-pending { background: #1e3a5f; color: #60a5fa; }
+  .chip-order-ordered { background: #14532d; color: #4ade80; }
+  .chip-order-shipped { background: #3b2f00; color: #fbbf24; }
+  .chip-order-done { background: #1a2e1a; color: #86efac; }
+  .chip-order-order_failed { background: #450a0a; color: #f87171; }
+  .tracking-form { display: flex; gap: 6px; align-items: center; }
+  .tracking-input { background: #0d0f1a; border: 1px solid #2a2d3e; color: #e0e0e0; padding: 4px 8px; border-radius: 4px; font-size: 12px; width: 130px; outline: none; }
+  .tracking-input:focus { border-color: #7c3aed; }
+  .btn-tracking { background: none; border: 1px solid #7c3aed; color: #a78bfa; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+  .btn-tracking:hover { background: #2e1065; }
+
   /* 데이터랩 분석 탭 */
   .dl-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
   .dl-period { font-size: 12px; color: #555; }
@@ -136,6 +153,7 @@
   <div class="tab active" onclick="switchTab('datalab')">데이터랩 분석</div>
   <div class="tab" onclick="switchTab('pipeline')">파이프라인</div>
   <div class="tab" onclick="switchTab('products')">마진 / 상품</div>
+  <div class="tab" onclick="switchTab('orders')">주문 관리</div>
 </div>
 
 <!-- 파이프라인 탭 -->
@@ -204,6 +222,31 @@
   </table>
 </div>
 
+<!-- 주문 관리 탭 -->
+<div id="panel-orders" class="panel">
+  <div class="order-header">
+    <button class="btn-sync" onclick="syncOrders()" id="btnOrderSync">쿠팡 주문 동기화</button>
+    <button class="btn-order-run" onclick="runDropship()" id="btnDropship">자동 주문 실행</button>
+    <span id="orderMsg" style="font-size:12px;color:#888;"></span>
+  </div>
+  <div class="order-summary" id="orderSummary"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>주문ID</th>
+        <th>상품명</th>
+        <th>수량</th>
+        <th>수령인</th>
+        <th>배송지</th>
+        <th>상태</th>
+        <th>도매꾹 주문번호</th>
+        <th>송장번호</th>
+      </tr>
+    </thead>
+    <tbody id="orderBody"></tbody>
+  </table>
+</div>
+
 <script>
 let _products = [];
 let _sortKey = 'created_at';
@@ -211,11 +254,12 @@ let _sortAsc = false;
 let _es = null;
 
 function switchTab(name) {
-  const tabs = ['datalab', 'pipeline', 'products'];
+  const tabs = ['datalab', 'pipeline', 'products', 'orders'];
   document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', tabs[i] === name));
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
   if (name === 'products') loadProducts();
+  if (name === 'orders') loadOrders();
 }
 
 /* ── 데이터랩 분석 ── */
@@ -594,6 +638,102 @@ function sortBy(key) {
   _sortAsc = _sortKey === key ? !_sortAsc : false;
   _sortKey = key;
   renderTable(_products);
+}
+
+/* ── 주문 관리 ── */
+let _orders = [];
+
+async function loadOrders() {
+  const res = await fetch('/api/orders');
+  _orders = await res.json();
+  renderOrders(_orders);
+}
+
+function renderOrders(orders) {
+  const body = document.getElementById('orderBody');
+  const summary = document.getElementById('orderSummary');
+
+  // 요약 카드
+  const counts = { pending: 0, ordered: 0, shipped: 0, done: 0, order_failed: 0 };
+  orders.forEach(o => { if (counts[o.status] !== undefined) counts[o.status]++; });
+  summary.innerHTML = [
+    ['대기', counts.pending, 'blue'],
+    ['주문완료', counts.ordered, 'green'],
+    ['배송중', counts.shipped, ''],
+    ['완료', counts.done, ''],
+    ['실패', counts.order_failed, ''],
+  ].map(([label, val, cls]) =>
+    `<div class="card"><div class="card-label">${label}</div><div class="card-value ${cls ? cls : ''}">${val}</div></div>`
+  ).join('');
+
+  if (!orders.length) {
+    body.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#555;padding:40px;">주문 없음</td></tr>';
+    return;
+  }
+
+  body.innerHTML = orders.map(o => {
+    const statusClass = `chip-order-${o.status}`;
+    const addr = [o.addr, o.addr_detail].filter(Boolean).join(' ');
+    const trackingCell = o.status === 'ordered' && !o.tracking_number
+      ? `<div class="tracking-form">
+           <input class="tracking-input" id="tn-${o.order_id}" placeholder="송장번호">
+           <button class="btn-tracking" onclick="submitTracking('${o.order_id}','${o.ordersheet_id}')">등록</button>
+         </div>`
+      : (o.tracking_number || '-');
+    return `<tr>
+      <td style="font-size:11px;color:#555;">${o.order_id}</td>
+      <td class="title-cell">${o.title || '-'}</td>
+      <td class="num">${o.qty}</td>
+      <td>${o.buyer_name || '-'}</td>
+      <td class="title-cell" style="font-size:11px;">${addr}</td>
+      <td><span class="status-chip ${statusClass}">${o.status}</span></td>
+      <td style="font-size:11px;">${o.domeggook_order || '-'}</td>
+      <td>${trackingCell}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function syncOrders() {
+  const msg = document.getElementById('orderMsg');
+  msg.textContent = '동기화 중...';
+  const res = await fetch('/api/orders/sync', { method: 'POST' });
+  const data = await res.json();
+  msg.textContent = `${data.fetched || 0}건 조회됨`;
+  await loadOrders();
+}
+
+async function runDropship() {
+  const btn = document.getElementById('btnDropship');
+  const msg = document.getElementById('orderMsg');
+  btn.disabled = true;
+  msg.textContent = '자동 주문 실행 중...';
+  const res = await fetch('/api/orders/run', { method: 'POST' });
+  const data = await res.json();
+  if (data.error) {
+    msg.textContent = '오류: ' + data.error;
+    btn.disabled = false;
+    return;
+  }
+  msg.textContent = '실행 중 (로그 확인)';
+  setTimeout(async () => { await loadOrders(); btn.disabled = false; msg.textContent = '완료'; }, 5000);
+}
+
+async function submitTracking(orderId, ordersheetId) {
+  const input = document.getElementById(`tn-${orderId}`);
+  const tn = input ? input.value.trim() : '';
+  if (!tn) { alert('송장번호를 입력하세요.'); return; }
+  const res = await fetch('/api/orders/tracking', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ order_id: orderId, ordersheet_id: ordersheetId, tracking_number: tn }),
+  });
+  const data = await res.json();
+  if (data.success) {
+    alert('송장 등록 완료');
+    await loadOrders();
+  } else {
+    alert('송장 등록 실패');
+  }
 }
 </script>
 </body>

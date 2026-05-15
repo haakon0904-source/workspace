@@ -348,6 +348,93 @@ def api_start_sale(seller_product_id):
     return jsonify({"success": False, "error": d2.get("message", "판매재개 실패")})
 
 
+@app.route("/api/orders")
+def api_orders():
+    """주문 목록 조회."""
+    if not DB_PATH.exists():
+        return jsonify([])
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM orders ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception:
+        return jsonify([])
+
+
+@app.route("/api/orders/sync", methods=["POST"])
+def api_orders_sync():
+    """쿠팡 출고대기 주문 동기화."""
+    try:
+        from run_pipeline import CONFIG
+        from uploader.coupang_order import get_pending_orders, sync_orders_to_db
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    orders = get_pending_orders(CONFIG)
+    if orders:
+        sync_orders_to_db(orders, CONFIG)
+    return jsonify({"fetched": len(orders)})
+
+
+@app.route("/api/orders/run", methods=["POST"])
+def api_orders_run():
+    """드랍쉬핑 자동 주문 실행."""
+    if _status["running"]:
+        return jsonify({"error": "파이프라인 실행 중"}), 400
+    try:
+        from run_pipeline import CONFIG
+        from pipeline.step7_order import run as run_order
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    def _run():
+        _status["running"] = True
+        try:
+            stats = run_order(CONFIG)
+            _log_queue.put(f"[주문] 조회={stats['fetched']}, 주문={stats['ordered']}, 송장={stats['tracking_registered']}")
+        except Exception as e:
+            _log_queue.put(f"[주문 오류] {e}")
+        finally:
+            _status["running"] = False
+            _log_queue.put("__END__")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/orders/tracking", methods=["POST"])
+def api_orders_tracking():
+    """주문에 송장번호 수동 등록."""
+    data = request.get_json(silent=True) or {}
+    order_id = data.get("order_id")
+    ordersheet_id = data.get("ordersheet_id")
+    tracking_number = data.get("tracking_number")
+    courier_code = data.get("courier_code", "CJGLS")
+    if not all([order_id, ordersheet_id, tracking_number]):
+        return jsonify({"error": "필수 파라미터 누락"}), 400
+
+    try:
+        from run_pipeline import CONFIG
+        from uploader.coupang_order import register_tracking
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    ok = register_tracking(order_id, ordersheet_id, tracking_number, courier_code, CONFIG)
+    if ok and DB_PATH.exists():
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            "UPDATE orders SET status='shipped', tracking_number=?, courier_code=?, updated_at=datetime('now') "
+            "WHERE order_id=? AND ordersheet_id=?",
+            (tracking_number, courier_code, order_id, ordersheet_id),
+        )
+        conn.commit()
+        conn.close()
+    return jsonify({"success": ok})
+
+
 @app.route("/api/server/restart", methods=["POST"])
 def api_restart():
     """현재 서버를 종료하고 새 프로세스로 재시작."""
