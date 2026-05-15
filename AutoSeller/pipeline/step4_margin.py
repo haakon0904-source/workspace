@@ -54,6 +54,53 @@ def _calc(product: dict, config: dict) -> dict:
     }
 
 
+# 상품명에 포함 시 제외할 키워드 (브랜드/정품/가품 리스크)
+_EXCLUDE_KEYWORDS = ["정품", "브랜드", "AS가능", "A/S", "공식", "인증", "특허"]
+
+# 착불/배송비 관련 제외 패턴
+_EXCLUDE_DELIVERY = ["착불", "화물"]
+
+
+def _prefilter(products: list, config: dict) -> tuple[list, int]:
+    """마진 계산 전 규칙 기반 필터링."""
+    min_price = config.get("filter_min_price", 3000)
+    max_price = config.get("filter_max_price", 30000)
+    max_min_qty = config.get("filter_max_min_qty", 3)
+
+    passed, excluded = [], 0
+    for p in products:
+        price = p.get("price", 0)
+        min_qty = p.get("min_qty", 1)
+        title = p.get("title", "")
+        delivery = p.get("delivery", "") or ""
+        img = p.get("img_url", "")
+
+        # 이미지 없는 상품 제외
+        if not img:
+            excluded += 1; continue
+
+        # 도매가 범위 필터
+        if not (min_price <= price <= max_price):
+            excluded += 1; continue
+
+        # 최소구매수량 필터
+        if min_qty > max_min_qty:
+            excluded += 1; continue
+
+        # 브랜드/정품 키워드 포함 상품 제외
+        if any(kw in title for kw in _EXCLUDE_KEYWORDS):
+            excluded += 1; continue
+
+        # 착불 배송 제외
+        if any(kw in delivery for kw in _EXCLUDE_DELIVERY):
+            excluded += 1; continue
+
+        passed.append(p)
+
+    print(f"[step4] 프리필터: {len(products)}개 → {len(passed)}개 (제외 {excluded}개)")
+    return passed, excluded
+
+
 def run(products: list, config: dict) -> list:
     """
     마진 계산 후 기준 통과 상품만 반환.
@@ -61,6 +108,8 @@ def run(products: list, config: dict) -> list:
     Returns:
         list[dict]: 기준 통과 상품 (sell_price, profit, margin_rate 필드 추가)
     """
+    products, _ = _prefilter(products, config)
+
     min_margin = config.get("min_margin_rate", 0.2)
     min_profit = config.get("min_profit", 1000)
 

@@ -105,9 +105,9 @@ async def _login(page, domeggook_id, domeggook_pw):
     return "로그아웃" in content or 'is_member: "y"' in content
 
 
-def _build_search_url(keyword, pg=1):
+def _build_search_url(keyword, pg=1, sort="sale"):
     kw = quote(keyword, encoding="euc-kr")
-    return f"https://domeggook.com/main/item/itemList.php?sw={kw}&sf=ttl&pg={pg}"
+    return f"https://domeggook.com/main/item/itemList.php?sw={kw}&sf=ttl&od={sort}&pg={pg}"
 
 
 async def _fetch_list_page(page, keyword, pg):

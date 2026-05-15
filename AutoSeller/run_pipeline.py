@@ -57,6 +57,11 @@ CONFIG = {
     "min_margin_rate": 0.3,
     "min_profit": 1000,
 
+    # 상품 프리필터
+    "filter_min_price": 3000,    # 최소 도매가 (원)
+    "filter_max_price": 30000,   # 최대 도매가 (원)
+    "filter_max_min_qty": 3,     # 최소구매수량 상한
+
     # DB
     "db_path": str(_ROOT / "db/autoseller.db"),
 
