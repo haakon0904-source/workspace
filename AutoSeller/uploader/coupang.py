@@ -101,6 +101,8 @@ def _build_product_payload(product: dict, config: dict) -> dict:
     if product.get("img_url"):
         images = [{"imageOrder": 0, "imageType": "REPRESENTATION", "cdnPath": product["img_url"]}]
 
+    search_tags = product.get("search_tags", [])
+
     return {
         "displayCategoryCode": category,
         "vendorId": vendor_id,
@@ -127,6 +129,7 @@ def _build_product_payload(product: dict, config: dict) -> dict:
         "returnCharge": 3000,
         "requested": True,
         "vendorUserId": vendor_user_id,
+        "keywords": search_tags if search_tags else None,
         "items": [
             {
                 "itemName": product["title"][:100],

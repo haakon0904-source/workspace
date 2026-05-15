@@ -59,32 +59,20 @@ def _run_pipeline(keywords=None, use_variations=True):
 
         kws = keywords or KEYWORDS
 
-        # Step 2: 변형어 확장 (네이버 API 키 있을 때 + use_variations=True)
-        if keywords and use_variations and CONFIG.get("naver_client_id"):
-            _log_queue.put(f"\n[Step 2] 변형어 생성 + 검색량 검증 ({len(keywords)}개 키워드)")
-            for kw in keywords:
-                if kw not in KEYWORD_CATEGORIES:
-                    KEYWORD_CATEGORIES[kw] = {
-                        "display_category": CONFIG.get("coupang_display_category", 69884),
-                        "commission": ("생활/건강",),
-                    }
-            kws = step2_keyword_variations.run(keywords, CONFIG)
-            for kw in kws:
-                if kw not in KEYWORD_CATEGORIES:
-                    KEYWORD_CATEGORIES[kw] = {
-                        "display_category": CONFIG.get("coupang_display_category", 69884),
-                        "commission": ("생활/건강",),
-                    }
-        else:
-            reason = "변형어 확장 OFF" if not use_variations else ("API 키 없음" if not CONFIG.get("naver_client_id") else "수동 키워드")
-            _log_queue.put(f"\n[Step 2] 생략 ({reason})")
+        # KEYWORD_CATEGORIES에 없는 키워드 기본값 추가
+        for kw in kws:
+            if kw not in KEYWORD_CATEGORIES:
+                KEYWORD_CATEGORIES[kw] = {
+                    "display_category": CONFIG.get("coupang_display_category", 69884),
+                    "commission": ("생활/건강",),
+                }
 
         _log_queue.put("\n[Config] 카테고리별 수수료율 조회")
         commission_rates, display_categories = _resolve_keyword_config(CONFIG)
         CONFIG["keyword_commission_rates"] = commission_rates
         CONFIG["keyword_display_categories"] = display_categories
 
-        _log_queue.put("\n[Step 3] 도매꾹 상품 수집")
+        _log_queue.put(f"\n[Step 3] 도매꾹 상품 수집 (원본 키워드 {len(kws)}개)")
         products = []
         for kw in kws:
             if _stop_event.is_set():
@@ -94,6 +82,16 @@ def _run_pipeline(keywords=None, use_variations=True):
         if not products:
             _log_queue.put("수집된 상품 없음. 종료.")
             return
+
+        # Step 2: 변형어를 쿠팡 검색태그로 생성 (크롤링 X)
+        if use_variations and CONFIG.get("naver_client_id"):
+            _log_queue.put(f"\n[Step 2] 변형어 검색태그 생성 ({len(kws)}개 키워드)")
+            variation_tags = step2_keyword_variations.get_tags(kws, CONFIG)
+            for p in products:
+                p["search_tags"] = variation_tags.get(p.get("keyword", ""), [])
+        else:
+            reason = "변형어 확장 OFF" if not use_variations else "API 키 없음"
+            _log_queue.put(f"\n[Step 2] 생략 ({reason})")
 
         _log_queue.put("\n[Step 4] 마진 계산")
         products = step4_margin.run(products, CONFIG)

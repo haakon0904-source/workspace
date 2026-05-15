@@ -163,6 +163,32 @@ def run(keywords: list[str], config: dict) -> list[str]:
     return deduped
 
 
+def get_tags(keywords: list[str], config: dict) -> dict[str, list[str]]:
+    """
+    키워드별 변형어 태그 반환 (크롤링 없이 쿠팡 검색태그 용도).
+
+    Returns:
+        dict[str, list[str]]: {keyword: [variation1, variation2, ...]}
+    """
+    min_ratio = config.get("variation_min_ratio", 1.0)
+    top_n = config.get("variation_top_n", 5)
+
+    end = datetime.now().strftime("%Y-%m-%d")
+    start = (datetime.now() - timedelta(weeks=4)).strftime("%Y-%m-%d")
+
+    result = {}
+    for kw in keywords:
+        candidates = _generate_candidates(kw)
+        cat_code = KEYWORD_CATEGORY_MAP.get(kw, DEFAULT_CATEGORY)
+        ratios = {}
+        for chunk in _chunk(candidates, 5):
+            ratios.update(_query_insight(cat_code, chunk, start, end, config))
+        valid = sorted([(v, r) for v, r in ratios.items() if r >= min_ratio], key=lambda x: x[1], reverse=True)
+        result[kw] = [v for v, _ in valid[:top_n]]
+        print(f"[step2] '{kw}' 태그: {result[kw]}")
+    return result
+
+
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
