@@ -199,15 +199,25 @@
 <!-- 마진/상품 탭 -->
 <div id="panel-products" class="panel">
   <div class="summary-bar" id="summaryBar"></div>
-  <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;">
+  <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">
     <input type="text" id="searchInput" placeholder="상품명 검색..." oninput="filterTable()"
            style="background:#1a1d2e;border:1px solid #2a2d3e;color:#e0e0e0;padding:8px 14px;border-radius:6px;width:280px;font-size:13px;outline:none;">
     <button class="btn-sync" onclick="syncCoupang()" id="btnSync">쿠팡 상태 동기화</button>
-    <span id="syncMsg" style="font-size:12px;color:#888;"></span>
+    <button id="btnBulkStop" onclick="bulkStopSale()"
+            style="display:none;background:none;border:1px solid #ef4444;color:#ef4444;padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;">
+      선택 판매중지
+    </button>
+    <button id="btnBulkStart" onclick="bulkStartSale()"
+            style="display:none;background:none;border:1px solid #22c55e;color:#22c55e;padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;">
+      선택 판매재개
+    </button>
+    <span id="selectedCount" style="font-size:12px;color:#888;"></span>
+    <span id="syncMsg" style="font-size:12px;color:#888;margin-left:auto;"></span>
   </div>
   <table>
     <thead>
       <tr>
+        <th style="width:36px;cursor:default;"><input type="checkbox" id="chkAll" onchange="toggleAllProducts(this)" style="accent-color:#2563eb;cursor:pointer;"></th>
         <th onclick="sortBy('item_no')">상품번호</th>
         <th onclick="sortBy('title')">상품명</th>
         <th onclick="sortBy('keyword')">키워드</th>
@@ -576,6 +586,8 @@ function renderTable(data) {
       statusCell = `<span style="color:#555;font-size:12px">동기화 필요</span>`;
     }
     return `<tr>
+      <td><input type="checkbox" class="prod-chk" data-spid="${spid}" onchange="updateBulkButtons()"
+                 style="accent-color:#2563eb;cursor:pointer;" ${spid ? '' : 'disabled'}></td>
       <td style="color:#60a5fa;font-size:11px">${p.item_no}</td>
       <td class="title-cell" title="${p.title}">${p.title}</td>
       <td style="color:#888">${p.keyword}</td>
@@ -591,6 +603,8 @@ function renderTable(data) {
       <td>${statusCell}</td>
     </tr>`;
   }).join('');
+  document.getElementById('chkAll').checked = false;
+  updateBulkButtons();
 }
 
 function syncCoupang() {
@@ -631,6 +645,53 @@ function onStatusChange(sel) {
         sel.disabled = false;
       }
     });
+}
+
+function toggleAllProducts(chk) {
+  document.querySelectorAll('.prod-chk:not(:disabled)').forEach(c => c.checked = chk.checked);
+  updateBulkButtons();
+}
+
+function updateBulkButtons() {
+  const checked = [...document.querySelectorAll('.prod-chk:checked')];
+  const n = checked.length;
+  document.getElementById('btnBulkStop').style.display = n > 0 ? '' : 'none';
+  document.getElementById('btnBulkStart').style.display = n > 0 ? '' : 'none';
+  document.getElementById('selectedCount').textContent = n > 0 ? `${n}개 선택됨` : '';
+}
+
+function _getCheckedSpids() {
+  return [...document.querySelectorAll('.prod-chk:checked')].map(c => c.dataset.spid).filter(Boolean);
+}
+
+async function bulkStopSale() {
+  const spids = _getCheckedSpids();
+  if (!spids.length) return;
+  if (!confirm(`${spids.length}개 상품을 판매중지하겠습니까?`)) return;
+  const msg = document.getElementById('syncMsg');
+  msg.textContent = '처리 중...';
+  let ok = 0, fail = 0;
+  for (const spid of spids) {
+    const r = await fetch(`/api/coupang/stop-sale/${spid}`, {method:'POST'}).then(r=>r.json());
+    r.success ? ok++ : fail++;
+  }
+  msg.textContent = `완료: ${ok}개 성공, ${fail}개 실패`;
+  loadProducts();
+}
+
+async function bulkStartSale() {
+  const spids = _getCheckedSpids();
+  if (!spids.length) return;
+  if (!confirm(`${spids.length}개 상품을 판매재개하겠습니까?`)) return;
+  const msg = document.getElementById('syncMsg');
+  msg.textContent = '처리 중...';
+  let ok = 0, fail = 0;
+  for (const spid of spids) {
+    const r = await fetch(`/api/coupang/start-sale/${spid}`, {method:'POST'}).then(r=>r.json());
+    r.success ? ok++ : fail++;
+  }
+  msg.textContent = `완료: ${ok}개 성공, ${fail}개 실패`;
+  loadProducts();
 }
 
 function filterTable() { renderTable(_products); }
