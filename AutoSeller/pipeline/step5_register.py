@@ -106,11 +106,20 @@ def run(products: list, config: dict) -> list:
             conn.commit()
             passed.append(p)
         except sqlite3.IntegrityError:
-            skipped_dup += 1  # 이미 등록된 상품
+            # 이미 DB에 있는 상품 — pending이면 업로드 대상 유지
+            row = conn.execute(
+                "SELECT status FROM products WHERE source=? AND item_no=?",
+                (p.get("source"), p.get("item_no")),
+            ).fetchone()
+            if row and row[0] == "pending":
+                passed.append(p)
+                print(f"[step5] 중복이지만 pending → 업로드 대상 유지 [{p['item_no']}]")
+            else:
+                skipped_dup += 1
 
     conn.close()
-    print(f"[step5] {len(products)}개 → DB저장 {len(passed)}개 "
-          f"(하네스실패 {skipped_harness}, 중복 {skipped_dup})")
+    print(f"[step5] {len(products)}개 → 업로드대상 {len(passed)}개 "
+          f"(하네스실패 {skipped_harness}, 이미업로드 {skipped_dup})")
     return passed
 
 

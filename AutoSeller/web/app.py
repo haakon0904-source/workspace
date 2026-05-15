@@ -93,8 +93,11 @@ def _run_pipeline(keywords=None, use_variations=True):
             reason = "변형어 확장 OFF" if not use_variations else "API 키 없음"
             _log_queue.put(f"\n[Step 2] 생략 ({reason})")
 
-        _log_queue.put("\n[Step 4] 마진 계산")
+        before_margin = len(products)
+        _log_queue.put(f"\n[Step 4] 마진 계산 ({before_margin}개 대상)")
         products = step4_margin.run(products, CONFIG)
+        _log_queue.put(f"[Step 4] {before_margin}개 중 {len(products)}개 마진 통과 "
+                       f"(제외 {before_margin - len(products)}개)")
         if not products:
             _log_queue.put("마진 기준 통과 상품 없음. 종료.")
             return
