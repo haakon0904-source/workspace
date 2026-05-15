@@ -123,6 +123,13 @@
 <header>
   <h1>AutoSeller</h1>
   <span class="badge">Dashboard</span>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
+    <span id="svrStatus" style="font-size:12px;color:#22c55e;">● 서버 실행 중</span>
+    <button id="btnRestart" onclick="restartServer()"
+            style="background:none;border:1px solid #374151;color:#888;padding:5px 14px;border-radius:6px;font-size:12px;cursor:pointer;">
+      서버 재시작
+    </button>
+  </div>
 </header>
 
 <div class="tabs">
@@ -435,6 +442,30 @@ function setRunning(on) {
   document.getElementById('btnStop').style.display = on ? 'inline-block' : 'none';
   document.getElementById('statusDot').className = 'status-dot' + (on ? ' running' : '');
   document.getElementById('statusText').textContent = on ? '실행 중...' : '완료';
+}
+
+function restartServer() {
+  const btn = document.getElementById('btnRestart');
+  const st = document.getElementById('svrStatus');
+  btn.disabled = true;
+  st.style.color = '#f59e0b';
+  st.textContent = '● 재시작 중...';
+  fetch('/api/server/restart', {method: 'POST'}).catch(() => {});
+  // 서버가 꺼지고 다시 뜰 때까지 폴링
+  setTimeout(function poll() {
+    fetch('/api/server/status')
+      .then(r => r.json())
+      .then(() => {
+        st.style.color = '#22c55e';
+        st.textContent = '● 서버 실행 중';
+        btn.disabled = false;
+      })
+      .catch(() => {
+        st.style.color = '#ef4444';
+        st.textContent = '● 재시작 중...';
+        setTimeout(poll, 1000);
+      });
+  }, 2000);
 }
 
 function stopPipeline() {

@@ -347,6 +347,26 @@ def api_start_sale(seller_product_id):
     return jsonify({"success": False, "error": d2.get("message", "판매재개 실패")})
 
 
+@app.route("/api/server/restart", methods=["POST"])
+def api_restart():
+    """현재 서버를 종료하고 새 프로세스로 재시작."""
+    import os, signal, subprocess
+    pid = os.getpid()
+    script = (
+        f"import time, subprocess, os, signal\n"
+        f"os.kill({pid}, signal.SIGTERM)\n"
+        f"time.sleep(2)\n"
+        f"subprocess.Popen(['python3', '{ROOT / 'web/app.py'}'])\n"
+    )
+    subprocess.Popen(["python3", "-c", script])
+    return jsonify({"ok": True})
+
+
+@app.route("/api/server/status")
+def api_server_status():
+    return jsonify({"ok": True})
+
+
 if __name__ == "__main__":
     print("AutoSeller 대시보드: http://localhost:5001")
     app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)
