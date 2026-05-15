@@ -106,14 +106,24 @@ def run(products: list, config: dict) -> list:
             conn.commit()
             passed.append(p)
         except sqlite3.IntegrityError:
-            # 이미 DB에 있는 상품 — pending이면 업로드 대상 유지
+            # 이미 DB에 있는 상품
             row = conn.execute(
-                "SELECT status FROM products WHERE source=? AND item_no=?",
+                "SELECT status, seller_product_id FROM products WHERE source=? AND item_no=?",
                 (p.get("source"), p.get("item_no")),
             ).fetchone()
-            if row and row[0] == "pending":
-                passed.append(p)
-                print(f"[step5] 중복이지만 pending → 업로드 대상 유지 [{p['item_no']}]")
+            if row:
+                status, seller_product_id = row
+                # seller_product_id 없으면 실제 미업로드 → 재시도
+                if not seller_product_id:
+                    conn.execute(
+                        "UPDATE products SET status='pending', updated_at=? WHERE source=? AND item_no=?",
+                        (now, p.get("source"), p.get("item_no")),
+                    )
+                    conn.commit()
+                    passed.append(p)
+                    print(f"[step5] 재업로드 대상 [{p['item_no']}] (이전상태: {status})")
+                else:
+                    skipped_dup += 1  # seller_product_id 있음 = 실제 업로드 완료
             else:
                 skipped_dup += 1
 

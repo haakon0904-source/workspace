@@ -54,7 +54,7 @@ CONFIG = {
     "commission_rate": 0.078,   # 쿠팡 수수료율
     "delivery_fee": 2500,       # 나의 배송비
     "vat_rate": 0.1,            # 부가세 10%
-    "min_margin_rate": 0.2,
+    "min_margin_rate": 0.3,
     "min_profit": 1000,
 
     # DB
