@@ -31,10 +31,11 @@ def _load_pw():
     naver_client_secret = next((l.split(":",1)[1].strip() for l in lines if l.startswith("Naver Client Secret")), "")
     domeggook_id = lines[0].strip()
     domeggook_pw = lines[1].strip()
-    return domeggook_id, domeggook_pw, coupang_id, coupang_secret, naver_client_id, naver_client_secret
+    birth_raw = next((l.split(":",1)[1].strip() for l in lines if l.startswith("생년월일")), "")
+    return domeggook_id, domeggook_pw, coupang_id, coupang_secret, naver_client_id, naver_client_secret, birth_raw
 
 
-_dmk_id, _dmk_pw, _cpg_key, _cpg_secret, _naver_id, _naver_secret = _load_pw()
+_dmk_id, _dmk_pw, _cpg_key, _cpg_secret, _naver_id, _naver_secret, _birth = _load_pw()
 
 CONFIG = {
     # 네이버 쇼핑 인사이트
@@ -46,6 +47,8 @@ CONFIG = {
     # 도매꾹
     "domeggook_id": _dmk_id,
     "domeggook_pw": _dmk_pw,
+    "domeggook_birth": _birth,   # YYMMDD → 생년월일 (보증보험)
+    "domeggook_pay_method": "vaccount",  # vaccount(가상계좌) | emoney(꾹페이)
     "max_pages": 2,
     "fetch_detail": True,
 

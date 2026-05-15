@@ -2,6 +2,11 @@
 도매꾹 자동 주문 (드랍쉬핑)
 - 쿠팡 주문 정보를 받아 도매꾹에 자동 주문
 - 수령인: 쿠팡 구매자 주소로 직접 배송
+
+결제 방식 config 키:
+    domeggook_pay_method: "emoney" (꾹페이) | "vaccount" (가상계좌)
+    기본값: vaccount (가상계좌 - 수동 이체 필요)
+    완전 자동화: emoney 선택 후 꾹페이 충전 필요
 """
 
 import asyncio
@@ -41,155 +46,261 @@ async def _login(page, domeggook_id: str, domeggook_pw: str) -> bool:
     return "로그아웃" in content or 'is_member: "y"' in content
 
 
-async def _order_item(page, order: dict) -> dict:
-    """
-    도매꾹 상품 1건 주문.
-    order 필드: item_no, qty, buyer_name, buyer_phone, addr, addr_detail, zip
-    반환: {"success": bool, "domeggook_order": str, "error": str}
-    """
-    item_no = order["item_no"]
-    qty = order.get("qty", 1)
+def _split_phone(phone: str) -> tuple[str, str, str]:
+    """010-1234-5678 → ('010','1234','5678')"""
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11:  # 010-xxxx-xxxx
+        return digits[:3], digits[3:7], digits[7:]
+    if len(digits) == 10:  # 02-xxxx-xxxx
+        return digits[:3], digits[3:6], digits[6:]
+    return digits[:3], digits[3:7], digits[7:] if len(digits) >= 10 else ("010", "0000", "0000")
 
-    # 상품 페이지 이동
+
+async def _select_option(page) -> bool:
+    """첫 번째 구매 가능한 옵션 선택. 옵션 없으면 True 반환."""
+    btn = await page.query_selector(".pOptSelectList .pSelectUIBtn button")
+    if not btn:
+        return True  # 옵션 없음
+
+    await btn.click()
+    await asyncio.sleep(0.3)
+
+    first = await page.query_selector(
+        ".pOptSelectList .pSelectUIMenu li:not(.pDisabled):not(.pTitleItem)"
+    )
+    if not first:
+        return False
+
+    text = await first.inner_text()
+    print(f"[domeggook_order] 옵션 선택: {text.strip()[:40]}")
+    await first.click()
+    await asyncio.sleep(0.5)
+    return True
+
+
+async def _navigate_to_order_form(page, item_no: str) -> bool:
+    """상품 페이지 → 옵션 선택 → 구매하기 → my_orderInfoForm.php 이동."""
     await page.goto(f"https://domeggook.com/{item_no}", wait_until="domcontentloaded", timeout=60000)
 
     try:
-        await page.wait_for_selector("#lThumbImg", timeout=10000)
+        await page.wait_for_selector("#lPayBtnBuy, #lOptBtnBuy", timeout=10000)
     except Exception:
-        return {"success": False, "domeggook_order": "", "error": "상품 페이지 로드 실패"}
+        return False
 
-    # 수량 설정
-    qty_input = await page.query_selector("input[name='cnt']")
-    if qty_input:
-        await qty_input.triple_click()
-        await qty_input.type(str(qty))
-
-    # 바로구매 버튼
-    buy_btn = await page.query_selector("#lBuyNow, .lBuyNow, a[onclick*='buyNow'], a[href*='buyNow']")
-    if not buy_btn:
-        # 대안: 장바구니 후 구매 시도
-        buy_btn = await page.query_selector("#lCart, .btn_buy, a.lBuyBtn")
-    if not buy_btn:
-        return {"success": False, "domeggook_order": "", "error": "구매 버튼 없음"}
-
-    await buy_btn.click()
-    await page.wait_for_load_state("domcontentloaded")
     await asyncio.sleep(1)
 
-    # 배송지 입력 폼 탐색
-    current_url = page.url
-    if "order" not in current_url and "cart" not in current_url and "buy" not in current_url:
-        return {"success": False, "domeggook_order": "", "error": f"주문 페이지 미이동: {current_url}"}
+    # dialog 처리
+    page.on("dialog", lambda d: asyncio.ensure_future(d.accept()))
 
-    # 배송지 폼 채우기
-    filled = await _fill_shipping_form(page, order)
-    if not filled:
-        return {"success": False, "domeggook_order": "", "error": "배송지 입력 실패"}
+    # 옵션 선택
+    ok = await _select_option(page)
+    if not ok:
+        print("[domeggook_order] 구매 가능한 옵션 없음")
+        return False
 
-    # 결제 진행
-    order_no = await _proceed_payment(page)
-    if order_no:
-        return {"success": True, "domeggook_order": order_no, "error": ""}
-    return {"success": False, "domeggook_order": "", "error": "결제 완료 확인 실패"}
+    # 구매하기 (JS 직접 호출)
+    await page.evaluate("lAddCart('ORDER')")
+
+    try:
+        await page.wait_for_url("**/my_orderInfoForm.php**", timeout=15000)
+        await asyncio.sleep(1)
+        return True
+    except Exception:
+        print(f"[domeggook_order] 주문 폼 이동 실패. 현재: {page.url}")
+        return False
 
 
-async def _fill_shipping_form(page, order: dict) -> bool:
-    """배송지 정보 입력."""
+async def _fill_order_form(page, order: dict, pay_method: str = "vaccount", birth: str = ""):
+    """배송지 입력 + 결제 방식 선택."""
     name = order.get("buyer_name", "")
     phone = order.get("buyer_phone", "").replace("-", "")
     addr = order.get("addr", "")
     addr_detail = order.get("addr_detail", "")
     zipcode = order.get("zip", "")
 
-    # 이름
-    for sel in ["input[name='rName']", "input[name='name']", "#rName"]:
-        el = await page.query_selector(sel)
-        if el:
-            await el.triple_click()
-            await el.type(name)
+    m1, m2, m3 = _split_phone(phone)
+
+    # 직접 입력 라디오 + 직접입력 허용 체크박스 (JS 클릭)
+    await page.evaluate("""
+        () => {
+            const r = document.getElementById('addressBookSetWrite');
+            if (r) r.click();
+            const w = document.getElementById('lPayWritableAddress');
+            if (w && !w.checked) w.click();
+        }
+    """)
+    await asyncio.sleep(0.5)
+
+    # JS로 직접 값 설정 (readonly 필드 우회)
+    await page.evaluate(f"""
+        () => {{
+            function setVal(sel, val) {{
+                const el = document.querySelector(sel);
+                if (!el) return;
+                el.removeAttribute('readonly');
+                el.removeAttribute('disabled');
+                el.value = val;
+                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                el.dispatchEvent(new Event('input', {{bubbles: true}}));
+            }}
+            setVal("input[name='get_name']", {repr(name)});
+            setVal("input[name='get_zipcode']", {repr(zipcode)});
+            setVal("input[name='get_address1']", {repr(addr)});
+            setVal("input[name='get_address2']", {repr(addr_detail)});
+            setVal("input[name='home_mobile2']", {repr(m2)});
+            setVal("input[name='home_mobile3']", {repr(m3)});
+        }}
+    """)
+
+    # 휴대폰 앞자리 select
+    sel = await page.query_selector("select[name='home_mobile1']")
+    if sel:
+        try:
+            await sel.select_option(m1)
+        except Exception:
+            await page.evaluate(f"document.querySelector(\"select[name='home_mobile1']\").value = '{m1}'")
+
+    # 보증보험 생년월일 입력 (YYMMDD → 19XX 연도로 변환)
+    if birth and len(birth) >= 6:
+        yy = birth[:2]
+        mm = birth[2:4]
+        dd = birth[4:6]
+        full_year = f"19{yy}" if int(yy) >= 0 else f"20{yy}"
+        await page.evaluate(f"""
+            () => {{
+                function setVal(sel, val) {{
+                    const el = document.querySelector(sel);
+                    if (!el) return;
+                    el.value = val;
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                }}
+                setVal("input[name='insuYear']", '{full_year}');
+                setVal("input[name='insuName']", document.querySelector("input[name='get_name']")?.value || '');
+            }}
+        """)
+        # select month/day
+        try:
+            await page.select_option("select[name='insuMonth']", mm.lstrip("0") or "1")
+        except Exception:
+            pass
+        try:
+            await page.select_option("select[name='insuDay']", dd.lstrip("0") or "1")
+        except Exception:
+            pass
+        # 성별 (radio 첫번째 = 남성)
+        await page.evaluate("""
+            () => {
+                const r = document.querySelector("input[name='insuSex']");
+                if (r) r.click();
+            }
+        """)
+    await asyncio.sleep(0.2)
+
+    # 결제 방식 + 동의 체크박스 (JS 일괄 처리)
+    method_map = {"vaccount": 0, "transfer": 1, "emoney": 2, "card": 3}
+    method_idx = method_map.get(pay_method, 0)
+    await page.evaluate(f"""
+        () => {{
+            // 결제 방식 선택
+            const radios = document.querySelectorAll("input[name='method']");
+            if (radios[{method_idx}]) radios[{method_idx}].click();
+
+            // 동의 체크박스 전체 체크
+            document.querySelectorAll("input[type='checkbox']").forEach(c => {{
+                const n = c.name || c.id || '';
+                if (n.includes('agree') || c.id === 'agreeChkInputId') {{
+                    if (!c.checked) c.click();
+                }}
+            }});
+        }}
+    """)
+    await asyncio.sleep(0.3)
+
+
+async def _submit_and_get_order_no(page) -> str:
+    """결제 버튼 클릭 후 주문번호 추출."""
+    # JS 클릭 (visibility 무관)
+    await page.evaluate("document.getElementById('paymentBtn').click()")
+    await asyncio.sleep(3)
+
+    # Toss Payments 가상계좌: 은행 선택 팝업 처리 (국민은행 선택)
+    for attempt in range(10):
+        await asyncio.sleep(1)
+        # 은행 선택 버튼 탐색
+        bank_btn = await page.query_selector("button:has-text('국민'), [class*='bank']:has-text('국민')")
+        if not bank_btn:
+            # 다른 방식으로 탐색
+            btns = await page.query_selector_all("button")
+            for btn in btns:
+                try:
+                    text = (await btn.inner_text()).strip()
+                    if text in ("국민", "KB국민"):
+                        bank_btn = btn
+                        break
+                except Exception:
+                    pass
+        if bank_btn:
+            print("[domeggook_order] 가상계좌 은행 선택: 국민")
+            await page.evaluate("el => el.click()", bank_btn)
+            await asyncio.sleep(5)
+            break
+        # 이미 다음 페이지로 넘어갔으면 중단
+        if "orderInfoForm" not in page.url:
             break
 
-    # 전화번호
-    for sel in ["input[name='rPhone']", "input[name='phone']", "#rPhone", "input[name='mobile']"]:
-        el = await page.query_selector(sel)
-        if el:
-            await el.triple_click()
-            await el.type(phone)
-            break
-
-    # 우편번호 (다음 주소 API 팝업 대신 직접 입력 시도)
-    for sel in ["input[name='rZip']", "input[name='zip']", "#rZip", "input[name='zipcode']"]:
-        el = await page.query_selector(sel)
-        if el:
-            await el.triple_click()
-            await el.type(zipcode)
-            break
-
-    # 주소
-    for sel in ["input[name='rAddr1']", "input[name='addr1']", "#rAddr1"]:
-        el = await page.query_selector(sel)
-        if el:
-            await el.triple_click()
-            await el.type(addr)
-            break
-
-    # 상세주소
-    for sel in ["input[name='rAddr2']", "input[name='addr2']", "#rAddr2"]:
-        el = await page.query_selector(sel)
-        if el:
-            await el.triple_click()
-            await el.type(addr_detail)
-            break
-
-    return True
-
-
-async def _proceed_payment(page) -> str:
-    """결제 버튼 클릭 후 주문번호 추출. 성공 시 주문번호 반환."""
-    # 결제하기 버튼
-    for sel in ["button[type='submit'].pay", "#payBtn", "input[value*='결제']",
-                "a[onclick*='pay']", "button:has-text('결제')", ".btn_pay"]:
-        btn = await page.query_selector(sel)
-        if btn:
-            await btn.click()
-            break
-    else:
-        # 텍스트 기반 검색
-        btns = await page.query_selector_all("button, input[type='submit'], input[type='button']")
-        for btn in btns:
-            text = await btn.inner_text() if await btn.get_attribute("type") != "hidden" else ""
-            if "결제" in text or "주문" in text:
-                await btn.click()
-                break
-
-    # 주문 완료 대기
     try:
-        await page.wait_for_url(re.compile(r"(orderEnd|order_end|complete|done)"), timeout=15000)
+        await page.wait_for_url(
+            re.compile(r"(orderEnd|order_end|orderIng|complete|done|result|myBuy/order(?!/my_order))"),
+            timeout=20000,
+        )
     except Exception:
         await asyncio.sleep(3)
 
-    # 주문번호 추출
+    current_url = page.url
     content = await page.content()
-    m = re.search(r"주문번호[^\d]*(\d{6,20})", content)
-    if m:
-        return m.group(1)
 
-    # URL에서도 시도
-    url = page.url
-    m = re.search(r"order[_]?no=(\d+)", url)
-    if m:
-        return m.group(1)
+    # 주문번호 추출 패턴
+    for pattern in [r"주문번호[^\d]*(\d{6,20})", r"ordNo=(\d+)", r"ord_no=(\d+)",
+                    r"orderNo[^0-9]*(\d+)"]:
+        m = re.search(pattern, content)
+        if m:
+            return m.group(1)
 
-    # 주문완료 텍스트만 있어도 임시 번호 반환
-    if "주문" in content and ("완료" in content or "감사" in content):
-        return "UNKNOWN"
+    m = re.search(r"[?&](ord_no|ordNo|orderNo)=(\d+)", current_url)
+    if m:
+        return m.group(2)
+
+    # 주문 완료 텍스트 확인
+    if any(kw in content for kw in ["주문이 완료", "주문완료", "결제가 완료", "주문 접수", "가상계좌"]):
+        return "ORDER_OK"
 
     return ""
+
+
+async def _order_item(page, order: dict, pay_method: str, birth: str = "") -> dict:
+    """도매꾹 상품 1건 주문."""
+    item_no = order["item_no"]
+
+    print(f"[domeggook_order]   상품 페이지 이동: {item_no}")
+    ok = await _navigate_to_order_form(page, item_no)
+    if not ok:
+        return {"success": False, "domeggook_order": "", "error": "주문 폼 이동 실패"}
+
+    print(f"[domeggook_order]   배송지 입력: {order.get('buyer_name')} / {order.get('addr','')[:30]}")
+    await _fill_order_form(page, order, pay_method, birth)
+
+    print("[domeggook_order]   결제 진행...")
+    order_no = await _submit_and_get_order_no(page)
+    if order_no:
+        return {"success": True, "domeggook_order": order_no, "error": ""}
+    return {"success": False, "domeggook_order": "", "error": "결제 완료 확인 실패"}
 
 
 async def _run_orders(orders: list[dict], config: dict) -> list[dict]:
     domeggook_id = config["domeggook_id"]
     domeggook_pw = config["domeggook_pw"]
+    pay_method = config.get("domeggook_pay_method", "vaccount")
+    birth = config.get("domeggook_birth", "")
 
     results = []
     async with async_playwright() as p:
@@ -201,15 +312,21 @@ async def _run_orders(orders: list[dict], config: dict) -> list[dict]:
         print("[domeggook_order] 로그인 성공")
 
         for order in orders:
-            print(f"[domeggook_order] 주문 시도: {order['item_no']} x{order.get('qty',1)} → {order.get('buyer_name')}")
-            result = await _order_item(page, order)
+            print(f"[domeggook_order] 주문: {order['item_no']} x{order.get('qty',1)}"
+                  f" → {order.get('buyer_name')}")
+            try:
+                result = await _order_item(page, order, pay_method, birth)
+            except Exception as e:
+                result = {"success": False, "domeggook_order": "", "error": str(e)}
+
             result["order_id"] = order.get("order_id")
             result["ordersheet_id"] = order.get("ordersheet_id")
             results.append(result)
+
             if result["success"]:
-                print(f"[domeggook_order] 주문 완료: {result['domeggook_order']}")
+                print(f"[domeggook_order] 완료: {result['domeggook_order']}")
             else:
-                print(f"[domeggook_order] 주문 실패: {result['error']}")
+                print(f"[domeggook_order] 실패: {result['error'][:120]}")
 
         await browser.close()
 
@@ -223,7 +340,7 @@ def place_orders(orders: list[dict], config: dict) -> list[dict]:
     Args:
         orders: [{order_id, ordersheet_id, item_no, qty,
                   buyer_name, buyer_phone, addr, addr_detail, zip}]
-        config: domeggook_id, domeggook_pw 포함
+        config: domeggook_id, domeggook_pw, domeggook_pay_method 포함
 
     Returns:
         [{order_id, ordersheet_id, success, domeggook_order, error}]
