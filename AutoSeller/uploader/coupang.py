@@ -51,8 +51,10 @@ def _request(method, path, config, body=None):
 
 
 def _build_contents(product: dict) -> list:
-    """도매꾹 이미지를 쿠팡 상세설명(contents)으로 변환."""
-    imgs = product.get("thumb_imgs") or []
+    """도매꾹 상세설명 이미지를 쿠팡 상세설명(contents)으로 변환."""
+    imgs = product.get("detail_imgs") or []
+    if not imgs:
+        imgs = product.get("thumb_imgs") or []
     if not imgs and product.get("img_url"):
         imgs = [product["img_url"]]
     return [
@@ -180,6 +182,38 @@ def upload(product: dict, config: dict) -> dict:
     else:
         msg = data.get("message") or resp.text[:300]
         return {"success": False, "product_id": "", "error": f"{resp.status_code}: {msg}"}
+
+
+def update_contents(seller_product_id: str, detail_imgs: list, config: dict) -> dict:
+    """
+    쿠팡 상품 상세설명 이미지 업데이트.
+    GET → items[].contents 교체 → PUT
+    Returns: {"success": bool, "error": str}
+    """
+    path = f"/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}"
+    resp = _request("GET", path, config)
+    data = resp.json()
+    if data.get("code") != "SUCCESS":
+        return {"success": False, "error": data.get("message", "조회 실패")}
+
+    product = data["data"]
+    product["requested"] = True  # 드래프트로 떨어지지 않도록
+    new_contents = [
+        {
+            "contentsType": "IMAGE_NO_SPACE",
+            "contentDetails": [{"content": url, "detailType": "IMAGE"}],
+        }
+        for url in detail_imgs
+    ]
+    for item in product.get("items", []):
+        item["contents"] = new_contents
+
+    put_path = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products"
+    r2 = _request("PUT", put_path, config, body=product)
+    d2 = r2.json()
+    if d2.get("code") == "SUCCESS":
+        return {"success": True, "error": ""}
+    return {"success": False, "error": d2.get("message", str(r2.status_code))}
 
 
 def stop_sale(seller_product_id: int, config: dict) -> dict:

@@ -41,6 +41,7 @@ def _init_db(conn: sqlite3.Connection):
     for col, definition in [
         ("seller_product_id", "TEXT"),
         ("coupang_status",    "TEXT"),
+        ("detail_imgs",       "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE products ADD COLUMN {col} {definition}")
@@ -91,16 +92,17 @@ def run(products: list, config: dict) -> list:
             continue
 
         try:
+            detail_imgs_json = json.dumps(p.get("detail_imgs") or [], ensure_ascii=False)
             conn.execute("""
                 INSERT INTO products
                     (source, keyword, item_no, title, buy_price, sell_price,
-                     profit, margin_rate, min_qty, img_url, delivery, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                     profit, margin_rate, min_qty, img_url, detail_imgs, delivery, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
             """, (
                 p.get("source"), p.get("keyword"), p.get("item_no"),
                 p.get("title"), p.get("price"), p.get("sell_price"),
                 p.get("profit"), p.get("margin_rate"),
-                p.get("min_qty", 1), p.get("img_url"), p.get("delivery"),
+                p.get("min_qty", 1), p.get("img_url"), detail_imgs_json, p.get("delivery"),
                 now, now,
             ))
             conn.commit()

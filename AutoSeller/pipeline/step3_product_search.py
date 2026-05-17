@@ -73,7 +73,12 @@ _DETAIL_JS = """
 
         const title = document.title.split('|')[0].trim();
 
-        return { imgSrc, thumbImgs, priceNum, minQty, delivery, title };
+        // 도매꾹 상세설명 이미지 (#lInfoViewItemContents)
+        const detailImgs = Array.from(document.querySelectorAll('#lInfoViewItemContents img'))
+            .map(i => i.src)
+            .filter(src => src && !src.includes('cdn1.domeggook.com/image/') && !src.startsWith('data:'));
+
+        return { imgSrc, thumbImgs, priceNum, minQty, delivery, title, detailImgs };
     }
 """
 
@@ -121,6 +126,10 @@ async def _fetch_detail(page, item_no, retries=3):
         try:
             await page.goto(f"https://domeggook.com/{item_no}", wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_selector("#lThumbImg", timeout=10000)
+            more_btn = await page.query_selector("#lBtnItemContentsMore")
+            if more_btn:
+                await more_btn.click()
+                await asyncio.sleep(0.5)
             detail = await page.evaluate(_DETAIL_JS)
             detail["itemNo"] = item_no
             return detail
@@ -130,7 +139,7 @@ async def _fetch_detail(page, item_no, retries=3):
                 await asyncio.sleep(3)
             else:
                 print(f"[step3]   실패 스킵 ({item_no}): {e.__class__.__name__}")
-                return {"itemNo": item_no, "imgSrc": "", "thumbImgs": [], "priceNum": 0, "minQty": 1, "delivery": "", "title": ""}
+                return {"itemNo": item_no, "imgSrc": "", "thumbImgs": [], "detailImgs": [], "priceNum": 0, "minQty": 1, "delivery": "", "title": ""}
 
 
 async def _search_keyword(page, keyword, max_pages, fetch_detail):
@@ -188,6 +197,7 @@ async def _search_keyword(page, keyword, max_pages, fetch_detail):
             "min_qty": detail["minQty"],
             "img_url": detail["imgSrc"],
             "thumb_imgs": detail["thumbImgs"],
+            "detail_imgs": detail["detailImgs"],
             "delivery": detail["delivery"],
         })
     return result
