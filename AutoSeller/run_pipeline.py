@@ -32,10 +32,15 @@ def _load_pw():
     domeggook_id = lines[0].strip()
     domeggook_pw = lines[1].strip()
     birth_raw = next((l.split(":",1)[1].strip() for l in lines if l.startswith("생년월일")), "")
-    return domeggook_id, domeggook_pw, coupang_id, coupang_secret, naver_client_id, naver_client_secret, birth_raw
+    telegram_token   = next((l.split("Bot Token:", 1)[1].strip() for l in lines if "Bot Token:" in l), "")
+    telegram_chat_id = next((l.split("Chat ID:", 1)[1].strip() for l in lines if "Chat ID:" in l), "")
+    return (domeggook_id, domeggook_pw, coupang_id, coupang_secret,
+            naver_client_id, naver_client_secret, birth_raw,
+            telegram_token, telegram_chat_id)
 
 
-_dmk_id, _dmk_pw, _cpg_key, _cpg_secret, _naver_id, _naver_secret, _birth = _load_pw()
+(_dmk_id, _dmk_pw, _cpg_key, _cpg_secret, _naver_id, _naver_secret, _birth,
+ _tg_token, _tg_chat_id) = _load_pw()
 
 CONFIG = {
     # 네이버 쇼핑 인사이트
@@ -83,6 +88,10 @@ CONFIG = {
         "address_detail": "1816-1501",
     },
     "coupang_display_category": 69884,
+
+    # 텔레그램
+    "telegram_token":   _tg_token,
+    "telegram_chat_id": _tg_chat_id,
 }
 
 # 키워드 → 쿠팡 카테고리 매핑

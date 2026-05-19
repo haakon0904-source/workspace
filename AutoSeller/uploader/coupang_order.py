@@ -16,11 +16,11 @@ def get_pending_orders(config: dict) -> list[dict]:
     vendor_id = config["coupang_vendor_id"]
     from datetime import datetime, timedelta
     date_from = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-    date_to = datetime.now().strftime("%Y-%m-%d")
+    date_to = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
 
     path = (
         f"/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets"
-        f"?status=ACCEPT&createdAtFrom={date_from}T00:00:00&createdAtTo={date_to}T23:59:59"
+        f"?status=ACCEPT&createdAtFrom={date_from}&createdAtTo={date_to}"
         f"&maxPerPage=50"
     )
     resp = _request("GET", path, config)
@@ -29,7 +29,7 @@ def get_pending_orders(config: dict) -> list[dict]:
         return []
 
     data = resp.json()
-    if data.get("code") != "SUCCESS":
+    if data.get("code") not in (200, "SUCCESS"):
         print(f"[coupang_order] 주문 조회 오류: {data.get('message')}")
         return []
 
@@ -38,9 +38,9 @@ def get_pending_orders(config: dict) -> list[dict]:
         for item in sheet.get("orderItems", []):
             orders.append({
                 "order_id":       sheet.get("orderId"),
-                "ordersheet_id":  sheet.get("orderSheetId"),
+                "ordersheet_id":  sheet.get("shipmentBoxId"),
                 "vendor_item_id": item.get("vendorItemId"),
-                "item_no":        item.get("externalVendorSku", ""),
+                "item_no":        item.get("externalVendorSkuCode", "") or item.get("externalVendorSku", ""),
                 "title":          item.get("vendorItemName", ""),
                 "qty":            item.get("shippingCount", 1),
                 "buyer_name":     sheet.get("receiver", {}).get("name", ""),

@@ -1,0 +1,49 @@
+name: Order Check & Twitter Notify
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # KST 09:00
+    - cron: '0 3 * * *'   # KST 12:00
+    - cron: '0 6 * * *'   # KST 15:00
+  workflow_dispatch:       # 수동 실행용
+
+jobs:
+  check-orders:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Restore processed order IDs cache
+        uses: actions/cache@v4
+        with:
+          path: AutoSeller/db/processed_order_ids.json
+          key: processed-orders-${{ github.run_id }}
+          restore-keys: processed-orders-
+
+      - name: Check orders & notify
+        env:
+          COUPANG_ACCESS_KEY: ${{ secrets.COUPANG_ACCESS_KEY }}
+          COUPANG_SECRET_KEY: ${{ secrets.COUPANG_SECRET_KEY }}
+          COUPANG_VENDOR_ID:  ${{ secrets.COUPANG_VENDOR_ID }}
+          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          cd AutoSeller
+          python tools/check_orders_notify.py
+
+      - name: Save processed order IDs cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: AutoSeller/db/processed_order_ids.json
+          key: processed-orders-${{ github.run_id }}
