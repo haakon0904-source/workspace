@@ -50,6 +50,12 @@ def _request(method, path, config, body=None):
     return resp
 
 
+_SHIPPING_NOTICE = {
+    "contentsType": "TEXT",
+    "contentDetails": [{"content": "본 상품은 제휴 물류센터에서 발송됩니다. 고객님의 개인정보(주소, 연락처)는 배송 목적으로만 활용됩니다.", "detailType": "TEXT"}],
+}
+
+
 def _build_contents(product: dict) -> list:
     """도매꾹 상세설명 이미지를 쿠팡 상세설명(contents)으로 변환."""
     imgs = product.get("detail_imgs") or []
@@ -57,7 +63,7 @@ def _build_contents(product: dict) -> list:
         imgs = product.get("thumb_imgs") or []
     if not imgs and product.get("img_url"):
         imgs = [product["img_url"]]
-    return [
+    contents = [
         {
             "contentsType": "IMAGE_NO_SPACE",
             "contentDetails": [{"content": url, "detailType": "IMAGE"}],
@@ -69,6 +75,8 @@ def _build_contents(product: dict) -> list:
             "contentDetails": [{"content": product.get("title", "상품"), "detailType": "TEXT"}],
         }
     ]
+    contents.append(_SHIPPING_NOTICE)
+    return contents
 
 
 _NOTICES = [
@@ -205,6 +213,7 @@ def update_contents(seller_product_id: str, detail_imgs: list, config: dict) -> 
         }
         for url in detail_imgs
     ]
+    new_contents.append(_SHIPPING_NOTICE)
     for item in product.get("items", []):
         item["contents"] = new_contents
 
