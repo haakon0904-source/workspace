@@ -33,6 +33,9 @@ def _calc(product: dict, config: dict) -> dict:
     display_category = config.get("keyword_display_categories", {}).get(
         product.get("keyword"), config.get("coupang_display_category", 69884)
     )
+    naver_leaf_category_id = config.get("keyword_naver_categories", {}).get(
+        product.get("keyword"), config.get("naver_leaf_category_id", "50000803")
+    )
 
     sell_price = int(buy_price * multiplier / 10) * 10  # 10원 단위 절사
     commission_fee = sell_price * commission
@@ -45,6 +48,7 @@ def _calc(product: dict, config: dict) -> dict:
         **product,
         "sell_price": sell_price,
         "display_category": display_category,
+        "naver_leaf_category_id": naver_leaf_category_id,
         "commission_rate": commission,
         "commission_fee": round(commission_fee),
         "delivery_fee": delivery,
@@ -101,6 +105,74 @@ def _prefilter(products: list, config: dict) -> tuple[list, int]:
     return passed, excluded
 
 
+_PHASH_THRESHOLD = 8  # Hamming distance 기준 (0=완전일치, 클수록 느슨)
+
+
+_HEADERS = {"User-Agent": "Mozilla/5.0"}
+
+
+def _fetch_phash(url: str):
+    """이미지 URL → pHash. 실패 시 None."""
+    try:
+        import imagehash
+        from PIL import Image
+        import io
+        import requests as _req
+        data = _req.get(url, timeout=10, headers=_HEADERS).content
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        return imagehash.phash(img)
+    except Exception:
+        return None
+
+
+def _dedup_by_image(products: list) -> list:
+    """
+    pHash 기반 시각적 중복 제거.
+    Hamming distance <= _PHASH_THRESHOLD 이면 동일 상품으로 판단 → 마진 높은 것만 유지.
+    이미지 다운로드 실패 상품은 그냥 통과.
+    """
+    if not products:
+        return products
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    urls = [(i, (p.get("img_url") or "").strip()) for i, p in enumerate(products)]
+    hashes = [None] * len(products)
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(_fetch_phash, url): i for i, url in urls if url}
+        for fut in as_completed(futures):
+            hashes[futures[fut]] = fut.result()
+
+    items = list(zip(products, hashes))
+
+    kept_indices = set(range(len(items)))
+
+    for i in range(len(items)):
+        if i not in kept_indices:
+            continue
+        ph_i = items[i][1]
+        if ph_i is None:
+            continue
+        for j in range(i + 1, len(items)):
+            if j not in kept_indices:
+                continue
+            ph_j = items[j][1]
+            if ph_j is None:
+                continue
+            if (ph_i - ph_j) <= _PHASH_THRESHOLD:
+                # 판매가 높은 쪽 제거 (소비자 기준, 동일 상품이면 저렴한 게 유리)
+                p_i, p_j = items[i][0], items[j][0]
+                loser = j if p_i["sell_price"] <= p_j["sell_price"] else i
+                kept_indices.discard(loser)
+
+    kept = [items[i][0] for i in sorted(kept_indices)]
+    dropped = len(products) - len(kept)
+    if dropped:
+        print(f"[step4] pHash 중복제거: {len(products)}개 → {len(kept)}개 (제거 {dropped}개)")
+    return kept
+
+
 def run(products: list, config: dict) -> list:
     """
     마진 계산 후 기준 통과 상품만 반환.
@@ -126,6 +198,7 @@ def run(products: list, config: dict) -> list:
             filtered += 1
 
     print(f"[step4] {len(products)}개 → 통과 {len(result)}개 (제외 {filtered}개)")
+    result = _dedup_by_image(result)
     return result
 
 

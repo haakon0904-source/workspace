@@ -108,24 +108,34 @@ def run(products: list, config: dict) -> list:
             conn.commit()
             passed.append(p)
         except sqlite3.IntegrityError:
-            # 이미 DB에 있는 상품
+            # 이미 DB에 있는 상품 — 선택된 플랫폼 기준으로 미등록 여부 판단
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(products)")}
+            if "naver_product_id" not in cols:
+                conn.execute("ALTER TABLE products ADD COLUMN naver_product_id TEXT")
+                conn.commit()
             row = conn.execute(
-                "SELECT status, seller_product_id FROM products WHERE source=? AND item_no=?",
+                "SELECT status, seller_product_id, naver_product_id FROM products WHERE source=? AND item_no=?",
                 (p.get("source"), p.get("item_no")),
             ).fetchone()
             if row:
-                status, seller_product_id = row
-                # seller_product_id 없으면 실제 미업로드 → 재시도
-                if not seller_product_id:
+                status, seller_product_id, naver_product_id = row
+                use_coupang = bool(config.get("coupang_access_key"))
+                use_naver = bool(config.get("naver_commerce_client_id"))
+                need_coupang = use_coupang and not seller_product_id
+                need_naver = use_naver and not naver_product_id
+                if need_coupang or need_naver:
                     conn.execute(
                         "UPDATE products SET status='pending', updated_at=? WHERE source=? AND item_no=?",
                         (now, p.get("source"), p.get("item_no")),
                     )
                     conn.commit()
                     passed.append(p)
-                    print(f"[step5] 재업로드 대상 [{p['item_no']}] (이전상태: {status})")
+                    targets = []
+                    if need_coupang: targets.append("쿠팡")
+                    if need_naver: targets.append("네이버")
+                    print(f"[step5] 재업로드 대상 [{p['item_no']}] → {', '.join(targets)}")
                 else:
-                    skipped_dup += 1  # seller_product_id 있음 = 실제 업로드 완료
+                    skipped_dup += 1
             else:
                 skipped_dup += 1
 

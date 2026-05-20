@@ -34,13 +34,19 @@ def _load_pw():
     birth_raw = next((l.split(":",1)[1].strip() for l in lines if l.startswith("생년월일")), "")
     telegram_token   = next((l.split("Bot Token:", 1)[1].strip() for l in lines if "Bot Token:" in l), "")
     telegram_chat_id = next((l.split("Chat ID:", 1)[1].strip() for l in lines if "Chat ID:" in l), "")
+    biz_no = next((l.split(":",1)[1].strip() for l in lines if l.startswith("사업자번호")), "")
+    naver_commerce_id = next((l.split(":",1)[1].strip() for l in lines if l.startswith("네이버 커머스 Client ID")), "")
+    naver_commerce_secret = next((l.split(":",1)[1].strip() for l in lines if l.startswith("네이버 커머스 Client Secret")), "")
+    naver_cs_phone = next((l.split(":",1)[1].strip() for l in lines if l.startswith("네이버 CS 전화번호")), "")
     return (domeggook_id, domeggook_pw, coupang_id, coupang_secret,
             naver_client_id, naver_client_secret, birth_raw,
-            telegram_token, telegram_chat_id)
+            telegram_token, telegram_chat_id, biz_no,
+            naver_commerce_id, naver_commerce_secret, naver_cs_phone)
 
 
 (_dmk_id, _dmk_pw, _cpg_key, _cpg_secret, _naver_id, _naver_secret, _birth,
- _tg_token, _tg_chat_id) = _load_pw()
+ _tg_token, _tg_chat_id, _biz_no,
+ _naver_commerce_id, _naver_commerce_secret, _naver_cs_phone) = _load_pw()
 
 CONFIG = {
     # 네이버 쇼핑 인사이트
@@ -53,7 +59,8 @@ CONFIG = {
     "domeggook_id": _dmk_id,
     "domeggook_pw": _dmk_pw,
     "domeggook_birth": _birth,   # YYMMDD → 생년월일 (보증보험)
-    "domeggook_pay_method": "vaccount",  # vaccount(가상계좌) | emoney(꾹페이)
+    "domeggook_biz_no": _biz_no,  # 사업자번호 (현금영수증 지출증빙)
+    "domeggook_pay_method": "emoney",  # vaccount(가상계좌) | emoney(꾹페이)
     "max_pages": 2,
     "fetch_detail": True,
 
@@ -92,6 +99,12 @@ CONFIG = {
     # 텔레그램
     "telegram_token":   _tg_token,
     "telegram_chat_id": _tg_chat_id,
+
+    # 네이버 스마트스토어
+    "naver_commerce_client_id":     _naver_commerce_id,
+    "naver_commerce_client_secret": _naver_commerce_secret,
+    "naver_cs_phone":               _naver_cs_phone,
+    "naver_leaf_category_id":       "50017381",  # 기본: 패션잡화>패션소품>우산>기타
 }
 
 # 키워드 → 쿠팡 카테고리 매핑
@@ -99,29 +112,32 @@ CONFIG = {
 # commission: (대분류, 중분류, 소분류) — coupang_commission.get_rate() 인자
 KEYWORD_CATEGORIES = {
     "우산": {
-        "display_category": 69884,           # 남녀공용2단우산
-        "commission": ("패션", "패션잡화"),   # 10.5%
+        "display_category": 69884,           # 쿠팡: 남녀공용2단우산
+        "commission": ("패션", "패션잡화"),   # 쿠팡 수수료 10.5%
+        "naver_leaf_category_id": "50004018", # 네이버: 패션잡화>패션소품>우산>자동우산
     },
 }
 
 KEYWORDS = list(KEYWORD_CATEGORIES.keys())
 
 
-def _resolve_keyword_config(config: dict) -> tuple[dict, dict]:
-    """키워드별 수수료율·카테고리 코드 반환. ({keyword: rate}, {keyword: display_category})"""
+def _resolve_keyword_config(config: dict) -> tuple[dict, dict, dict]:
+    """키워드별 수수료율·카테고리 반환. ({keyword: rate}, {keyword: coupang_category}, {keyword: naver_category})"""
     rates = {}
     categories = {}
+    naver_categories = {}
     for keyword, info in KEYWORD_CATEGORIES.items():
         rate = get_rate(*info["commission"])
         rates[keyword] = rate
         categories[keyword] = info["display_category"]
-        print(f"[config] {keyword}: 카테고리={info['display_category']}, 수수료={rate*100:.1f}%")
-    return rates, categories
+        naver_categories[keyword] = info.get("naver_leaf_category_id", config.get("naver_leaf_category_id", "50000803"))
+        print(f"[config] {keyword}: 쿠팡={info['display_category']}, 네이버={naver_categories[keyword]}, 수수료={rate*100:.1f}%")
+    return rates, categories, naver_categories
 
 
 # 하위 호환 (web/app.py에서 사용)
 def _resolve_commission_rates(config: dict) -> dict:
-    rates, _ = _resolve_keyword_config(config)
+    rates, _, _ = _resolve_keyword_config(config)
     return rates
 
 
@@ -163,9 +179,10 @@ def main():
 
     # 키워드별 수수료율·카테고리 조회
     print("\n[Config] 카테고리별 수수료율 조회")
-    commission_rates, display_categories = _resolve_keyword_config(CONFIG)
+    commission_rates, display_categories, naver_categories = _resolve_keyword_config(CONFIG)
     CONFIG["keyword_commission_rates"] = commission_rates
     CONFIG["keyword_display_categories"] = display_categories
+    CONFIG["keyword_naver_categories"] = naver_categories
 
     # Step 3: 상품 서치
     print("\n[Step 3] 도매꾹 상품 수집")

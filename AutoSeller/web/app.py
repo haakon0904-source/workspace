@@ -42,7 +42,7 @@ class _Tee:
         self._orig.flush()
 
 
-def _run_pipeline(keywords=None, use_variations=True):
+def _run_pipeline(keywords=None, use_variations=True, platforms=None):
     _status["running"] = True
     old_stdout = sys.stdout
     sys.stdout = _Tee(old_stdout, _log_queue)
@@ -52,6 +52,16 @@ def _run_pipeline(keywords=None, use_variations=True):
             step2_keyword_variations,
             step3_product_search, step4_margin, step5_register, step6_upload,
         )
+
+        # 선택된 플랫폼만 활성화 (미선택 플랫폼 키 임시 제거)
+        run_config = dict(CONFIG)
+        if platforms:
+            if "coupang" not in platforms:
+                run_config.pop("coupang_access_key", None)
+            if "naver" not in platforms:
+                run_config.pop("naver_commerce_client_id", None)
+        else:
+            run_config = CONFIG
 
         _log_queue.put("=" * 50)
         _log_queue.put("AutoSeller 파이프라인 시작")
@@ -68,9 +78,10 @@ def _run_pipeline(keywords=None, use_variations=True):
                 }
 
         _log_queue.put("\n[Config] 카테고리별 수수료율 조회")
-        commission_rates, display_categories = _resolve_keyword_config(CONFIG)
-        CONFIG["keyword_commission_rates"] = commission_rates
-        CONFIG["keyword_display_categories"] = display_categories
+        commission_rates, display_categories, naver_categories = _resolve_keyword_config(run_config)
+        run_config["keyword_commission_rates"] = commission_rates
+        run_config["keyword_display_categories"] = display_categories
+        run_config["keyword_naver_categories"] = naver_categories
 
         _log_queue.put(f"\n[Step 3] 도매꾹 상품 수집 (원본 키워드 {len(kws)}개)")
         products = []
@@ -78,15 +89,15 @@ def _run_pipeline(keywords=None, use_variations=True):
             if _stop_event.is_set():
                 _log_queue.put("[중단] 사용자 요청으로 크롤링 중단됨")
                 break
-            products.extend(step3_product_search.run([kw], CONFIG))
+            products.extend(step3_product_search.run([kw], run_config))
         if not products:
             _log_queue.put("수집된 상품 없음. 종료.")
             return
 
         # Step 2: 변형어를 쿠팡 검색태그로 생성 (크롤링 X)
-        if use_variations and CONFIG.get("naver_client_id"):
+        if use_variations and run_config.get("naver_client_id"):
             _log_queue.put(f"\n[Step 2] 변형어 검색태그 생성 ({len(kws)}개 키워드)")
-            variation_tags = step2_keyword_variations.get_tags(kws, CONFIG)
+            variation_tags = step2_keyword_variations.get_tags(kws, run_config)
             for p in products:
                 p["search_tags"] = variation_tags.get(p.get("keyword", ""), [])
         else:
@@ -95,7 +106,7 @@ def _run_pipeline(keywords=None, use_variations=True):
 
         before_margin = len(products)
         _log_queue.put(f"\n[Step 4] 마진 계산 ({before_margin}개 대상)")
-        products = step4_margin.run(products, CONFIG)
+        products = step4_margin.run(products, run_config)
         _log_queue.put(f"[Step 4] {before_margin}개 중 {len(products)}개 마진 통과 "
                        f"(제외 {before_margin - len(products)}개)")
         if not products:
@@ -103,13 +114,16 @@ def _run_pipeline(keywords=None, use_variations=True):
             return
 
         _log_queue.put("\n[Step 5] DB 저장 + 하네스 검증")
-        products = step5_register.run(products, CONFIG)
+        products = step5_register.run(products, run_config)
         if not products:
             _log_queue.put("하네스 통과 상품 없음. 종료.")
             return
 
-        _log_queue.put("\n[Step 6] 쿠팡 업로드")
-        results = step6_upload.run(products, CONFIG)
+        active_platforms = []
+        if run_config.get("coupang_access_key"): active_platforms.append("쿠팡")
+        if run_config.get("naver_commerce_client_id"): active_platforms.append("네이버")
+        _log_queue.put(f"\n[Step 6] {' + '.join(active_platforms) if active_platforms else '플랫폼 미설정'} 업로드")
+        results = step6_upload.run(products, run_config)
         success = [r for r in results if r.get("success")]
         _log_queue.put("=" * 50)
         _log_queue.put(f"완료: {len(success)}/{len(results)}개 등록 성공")
@@ -208,7 +222,8 @@ def api_run():
     data = request.get_json(silent=True) or {}
     keywords = data.get("keywords") or None
     use_variations = data.get("use_variations", True)
-    threading.Thread(target=_run_pipeline, args=(keywords, use_variations), daemon=True).start()
+    platforms = data.get("platforms") or None
+    threading.Thread(target=_run_pipeline, args=(keywords, use_variations, platforms), daemon=True).start()
     return jsonify({"ok": True})
 
 
@@ -247,11 +262,17 @@ def api_products():
     if not DB_PATH.exists():
         return jsonify([])
     conn = sqlite3.connect(DB_PATH)
+    # naver_product_id 컬럼 없으면 추가
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(products)")}
+    if "naver_product_id" not in cols:
+        conn.execute("ALTER TABLE products ADD COLUMN naver_product_id TEXT")
+        conn.commit()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     cur.execute("""
         SELECT item_no, title, keyword, buy_price, sell_price,
-               profit, margin_rate, status, seller_product_id, coupang_status, created_at
+               profit, margin_rate, status, seller_product_id, coupang_status,
+               COALESCE(naver_product_id, '') as naver_product_id, created_at
         FROM products
         ORDER BY created_at DESC
     """)
@@ -355,6 +376,10 @@ def api_orders():
         return jsonify([])
     try:
         conn = sqlite3.connect(DB_PATH)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(orders)")}
+        if "platform" not in cols:
+            conn.execute("ALTER TABLE orders ADD COLUMN platform TEXT DEFAULT 'coupang'")
+            conn.commit()
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT * FROM orders ORDER BY created_at DESC LIMIT 200"
@@ -390,14 +415,20 @@ def api_orders_run():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+    data = request.get_json(silent=True) or {}
+    order_ids = data.get("order_ids") or None  # None이면 전체 처리
+
     def _run():
         _status["running"] = True
+        old_stdout = sys.stdout
+        sys.stdout = _Tee(old_stdout, _log_queue)
         try:
-            stats = run_order(CONFIG)
+            stats = run_order(CONFIG, order_ids=order_ids)
             _log_queue.put(f"[주문] 조회={stats['fetched']}, 주문={stats['ordered']}, 송장={stats['tracking_registered']}")
         except Exception as e:
             _log_queue.put(f"[주문 오류] {e}")
         finally:
+            sys.stdout = old_stdout
             _status["running"] = False
             _log_queue.put("__END__")
 

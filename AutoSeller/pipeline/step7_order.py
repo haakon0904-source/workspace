@@ -16,13 +16,20 @@ from uploader.coupang_order import get_pending_orders, sync_orders_to_db, regist
 from uploader.domeggook_order import place_orders
 
 
-def _get_pending_from_db(db_path: str) -> list[dict]:
-    """DB에서 status='pending' 주문 조회."""
+def _get_pending_from_db(db_path: str, order_ids: list = None) -> list[dict]:
+    """DB에서 status='pending' 주문 조회. order_ids 지정 시 해당 주문만."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        "SELECT * FROM orders WHERE status='pending' ORDER BY created_at"
-    ).fetchall()
+    if order_ids:
+        placeholders = ",".join("?" * len(order_ids))
+        rows = conn.execute(
+            f"SELECT * FROM orders WHERE status='pending' AND order_id IN ({placeholders}) ORDER BY created_at",
+            [str(i) for i in order_ids],
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM orders WHERE status='pending' ORDER BY created_at"
+        ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -87,7 +94,7 @@ def _get_shipped_orders(db_path: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def run(config: dict) -> dict:
+def run(config: dict, order_ids: list = None) -> dict:
     """
     드랍쉬핑 전체 플로우 실행.
 
@@ -105,7 +112,7 @@ def run(config: dict) -> dict:
         sync_orders_to_db(orders, config)
 
     # 2. DB pending 주문 → 도매꾹 자동 주문
-    pending = _get_pending_from_db(db_path)
+    pending = _get_pending_from_db(db_path, order_ids)
     print(f"[step7] 도매꾹 주문 대상: {len(pending)}건")
 
     if pending:

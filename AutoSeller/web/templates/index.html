@@ -110,6 +110,17 @@
   .btn-tracking { background: none; border: 1px solid #7c3aed; color: #a78bfa; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; white-space: nowrap; }
   .btn-tracking:hover { background: #2e1065; }
 
+  /* 플랫폼 필터 */
+  .platform-filter { display: flex; gap: 8px; margin-bottom: 16px; }
+  .pf-btn { background: #1a1d2e; border: 1px solid #2a2d3e; color: #888; padding: 5px 16px; border-radius: 20px; font-size: 12px; cursor: pointer; transition: all .15s; }
+  .pf-btn.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .pf-btn:hover:not(.active) { border-color: #60a5fa; color: #60a5fa; }
+  /* 플랫폼 배지 */
+  .plat-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+  .plat-coupang { background: #1e2a4a; color: #60a5fa; }
+  .plat-naver { background: #1a3320; color: #4ade80; }
+  .plat-none { background: #1e1e1e; color: #555; }
+
   /* 데이터랩 분석 탭 */
   .dl-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
   .dl-period { font-size: 12px; color: #555; }
@@ -165,7 +176,7 @@
     <div><span style="color:#2563eb;font-weight:600;">3. 상품 필터</span> &nbsp;→&nbsp; 이미지 없음 / 도매가 3천원 미만·3만원 초과 / 최소구매수량 4개↑ / 정품·브랜드 포함 / 착불 → 자동 제외.</div>
     <div><span style="color:#2563eb;font-weight:600;">4. 마진 계산 + 검색태그</span> &nbsp;→&nbsp; 판매가×2.5배, 수수료+부가세 반영. 마진율 <span style="color:#f59e0b">30%</span> 미만 제외. 변형어를 쿠팡 검색태그로 추가.</div>
     <div><span style="color:#2563eb;font-weight:600;">5. DB 저장</span> &nbsp;→&nbsp; 통과 상품을 SQLite에 저장. 중복 상품 자동 스킵.</div>
-    <div><span style="color:#2563eb;font-weight:600;">6. 쿠팡 업로드</span> &nbsp;→&nbsp; 쿠팡 WING API로 상품 등록 (변형어 검색태그 포함). 결과는 <b style="color:#ccc">마진/상품</b> 탭에서 확인.</div>
+    <div><span style="color:#2563eb;font-weight:600;">6. 쿠팡 + 네이버 업로드</span> &nbsp;→&nbsp; 쿠팡 WING API + 네이버 커머스 API 동시 등록. 결과는 <b style="color:#ccc">마진/상품</b> 탭에서 확인.</div>
   </div>
   <div class="pipeline-header">
     <button class="btn-run" id="btnRun" onclick="analyzeTrending()">파이프라인 실행</button>
@@ -199,6 +210,11 @@
 <!-- 마진/상품 탭 -->
 <div id="panel-products" class="panel">
   <div class="summary-bar" id="summaryBar"></div>
+  <div class="platform-filter">
+    <button class="pf-btn active" onclick="setPlatformFilter('all', this)">전체</button>
+    <button class="pf-btn" onclick="setPlatformFilter('coupang', this)">쿠팡</button>
+    <button class="pf-btn" onclick="setPlatformFilter('naver', this)">네이버</button>
+  </div>
   <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center;flex-wrap:wrap;">
     <input type="text" id="searchInput" placeholder="상품명 검색..." oninput="filterTable()"
            style="background:#1a1d2e;border:1px solid #2a2d3e;color:#e0e0e0;padding:8px 14px;border-radius:6px;width:280px;font-size:13px;outline:none;">
@@ -225,7 +241,8 @@
         <th onclick="sortBy('sell_price')" class="num">판매가</th>
         <th onclick="sortBy('profit')" class="num">순이익</th>
         <th onclick="sortBy('margin_rate')">마진율</th>
-        <th onclick="sortBy('coupang_status')">쿠팡 상태</th>
+        <th onclick="sortBy('coupang_status')">쿠팡</th>
+        <th>네이버</th>
       </tr>
     </thead>
     <tbody id="productBody"></tbody>
@@ -236,14 +253,17 @@
 <div id="panel-orders" class="panel">
   <div class="order-header">
     <button class="btn-sync" onclick="syncOrders()" id="btnOrderSync">쿠팡 주문 동기화</button>
-    <button class="btn-order-run" onclick="runDropship()" id="btnDropship">자동 주문 실행</button>
+    <button class="btn-order-run" onclick="runDropship()" id="btnDropship">선택 주문 실행</button>
+    <span id="orderSelectedCount" style="font-size:12px;color:#a78bfa;"></span>
     <span id="orderMsg" style="font-size:12px;color:#888;"></span>
   </div>
   <div class="order-summary" id="orderSummary"></div>
+  <div id="orderLogBox" style="display:none;background:#0d0f1a;border:1px solid #2a2d3e;border-radius:8px;padding:16px;height:200px;overflow-y:auto;font-family:'Menlo','Monaco',monospace;font-size:12px;line-height:1.6;margin-bottom:20px;"></div>
   <table>
     <thead>
       <tr>
-        <th>주문ID</th>
+        <th style="width:36px;cursor:default;"><input type="checkbox" id="chkAllOrders" onchange="toggleAllOrders(this)" style="accent-color:#7c3aed;cursor:pointer;"></th>
+        <th>주문ID / 플랫폼</th>
         <th>상품명</th>
         <th>수량</th>
         <th>수령인</th>
@@ -262,6 +282,7 @@ let _products = [];
 let _sortKey = 'created_at';
 let _sortAsc = false;
 let _es = null;
+let _platformFilter = 'all';
 
 function switchTab(name) {
   const tabs = ['datalab', 'pipeline', 'products', 'orders'];
@@ -405,6 +426,26 @@ function analyzeTrending() {
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
+        <div style="margin-bottom:14px;">
+          <div style="font-size:12px;color:#888;margin-bottom:8px;font-weight:500;">업로드 플랫폼 선택</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            ${[
+              {id:'plat-coupang', label:'쿠팡', enabled:true},
+              {id:'plat-naver',   label:'네이버 스마트스토어', enabled:true},
+              {id:'plat-11st',    label:'11번가', enabled:false},
+              {id:'plat-gmarket', label:'G마켓', enabled:false},
+              {id:'plat-toss',    label:'토스쇼핑', enabled:false},
+            ].map(p => `
+              <label style="display:flex;align-items:center;gap:6px;cursor:${p.enabled?'pointer':'default'};
+                            background:#0d0f1a;border:1px solid ${p.enabled?'#2a2d3e':'#1a1d2e'};
+                            padding:6px 12px;border-radius:6px;font-size:12px;
+                            color:${p.enabled?'#e0e0e0':'#444'};">
+                <input type="checkbox" id="${p.id}" ${p.enabled?'checked':''} ${p.enabled?'':'disabled'}
+                       style="accent-color:#2563eb;width:13px;height:13px;">
+                ${p.label}${p.enabled?'':' <span style="font-size:10px;color:#333;margin-left:4px;">준비중</span>'}
+              </label>`).join('')}
+          </div>
+        </div>
         <div class="kw-actions">
           <button class="btn-crawl" onclick="startCrawl()">크롤링 시작 (<span id="kwCount">${top.length}</span>개 키워드)</button>
           <button class="btn-cancel-kw" onclick="cancelKeyword()">취소</button>
@@ -451,10 +492,15 @@ function startCrawl() {
   const keywords = getSelectedKeywords();
   if (!keywords.length) { alert('키워드를 하나 이상 선택하세요.'); return; }
   const useVariations = document.getElementById('useVariations')?.checked ?? true;
+  const platformMap = {coupang:'plat-coupang', naver:'plat-naver'};
+  const platforms = Object.entries(platformMap)
+    .filter(([,id]) => document.getElementById(id)?.checked)
+    .map(([key]) => key);
+  if (!platforms.length) { alert('플랫폼을 하나 이상 선택하세요.'); return; }
   fetch('/api/pipeline/run', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({keywords, use_variations: useVariations}),
+    body: JSON.stringify({keywords, use_variations: useVariations, platforms}),
   })
     .then(r => r.json())
     .then(d => {
@@ -537,6 +583,12 @@ fetch('/api/pipeline/status').then(r=>r.json()).then(d => {
 });
 
 /* ── Products ── */
+function setPlatformFilter(val, btn) {
+  _platformFilter = val;
+  document.querySelectorAll('.pf-btn').forEach(b => b.classList.toggle('active', b === btn));
+  renderTable(_products);
+}
+
 function loadProducts() {
   fetch('/api/products').then(r=>r.json()).then(data => {
     _products = data;
@@ -547,12 +599,14 @@ function loadProducts() {
 
 function renderSummary(data) {
   const total = data.length;
-  const uploaded = data.filter(p => p.status === 'uploaded').length;
+  const coupangOk = data.filter(p => p.coupang_status === '승인완료').length;
+  const naverOk = data.filter(p => p.naver_product_id).length;
   const avgMargin = total ? (data.reduce((s,p) => s + p.margin_rate, 0) / total * 100).toFixed(1) : 0;
   const totalProfit = data.reduce((s,p) => s + (p.profit || 0), 0);
   document.getElementById('summaryBar').innerHTML = `
     <div class="card"><div class="card-label">전체 상품</div><div class="card-value">${total}</div></div>
-    <div class="card"><div class="card-label">업로드 완료</div><div class="card-value green">${uploaded}</div></div>
+    <div class="card"><div class="card-label">쿠팡 판매중</div><div class="card-value blue">${coupangOk}</div></div>
+    <div class="card"><div class="card-label">네이버 등록</div><div class="card-value green">${naverOk}</div></div>
     <div class="card"><div class="card-label">평균 마진율</div><div class="card-value blue">${avgMargin}%</div></div>
     <div class="card"><div class="card-label">예상 총이익</div><div class="card-value">${totalProfit.toLocaleString()}원</div></div>
   `;
@@ -561,6 +615,11 @@ function renderSummary(data) {
 function renderTable(data) {
   const q = document.getElementById('searchInput').value.toLowerCase();
   const rows = data
+    .filter(p => {
+      if (_platformFilter === 'coupang') return !!p.seller_product_id;
+      if (_platformFilter === 'naver') return !!p.naver_product_id;
+      return true;
+    })
     .filter(p => !q || p.title.toLowerCase().includes(q) || p.item_no.includes(q))
     .sort((a,b) => {
       const v = _sortAsc ? 1 : -1;
@@ -571,10 +630,13 @@ function renderTable(data) {
     const pct = Math.min((p.margin_rate * 100), 60);
     const cs = p.coupang_status || '';
     const spid = p.seller_product_id || '';
-    let statusCell;
+    const naverPid = p.naver_product_id || '';
+
+    // 쿠팡 상태 셀
+    let coupangCell;
     if (spid) {
       const isSelling = cs === '승인완료';
-      statusCell = `
+      coupangCell = `
         <select class="status-select" data-spid="${spid}"
                 onchange="onStatusChange(this)"
                 style="background:#1a1d2e;border:1px solid #2a2d3e;color:${isSelling?'#4ade80':'#fbbf24'};
@@ -583,8 +645,14 @@ function renderTable(data) {
           <option value="판매중지" ${!isSelling ? 'selected' : ''}>판매중지</option>
         </select>`;
     } else {
-      statusCell = `<span style="color:#555;font-size:12px">동기화 필요</span>`;
+      coupangCell = `<span style="color:#555;font-size:12px">미등록</span>`;
     }
+
+    // 네이버 상태 셀
+    const naverCell = naverPid
+      ? `<span class="plat-badge plat-naver">판매중</span>`
+      : `<span class="plat-badge plat-none">미등록</span>`;
+
     return `<tr>
       <td><input type="checkbox" class="prod-chk" data-spid="${spid}" onchange="updateBulkButtons()"
                  style="accent-color:#2563eb;cursor:pointer;" ${spid ? '' : 'disabled'}></td>
@@ -600,7 +668,8 @@ function renderTable(data) {
           <span class="margin-text">${(p.margin_rate*100).toFixed(1)}%</span>
         </div>
       </td>
-      <td>${statusCell}</td>
+      <td>${coupangCell}</td>
+      <td>${naverCell}</td>
     </tr>`;
   }).join('');
   document.getElementById('chkAll').checked = false;
@@ -735,6 +804,7 @@ function renderOrders(orders) {
   body.innerHTML = orders.map(o => {
     const statusClass = `chip-order-${o.status}`;
     const addr = [o.addr, o.addr_detail].filter(Boolean).join(' ');
+    const isPending = o.status === 'pending';
     const trackingCell = o.status === 'ordered' && !o.tracking_number
       ? `<div class="tracking-form">
            <input class="tracking-input" id="tn-${o.order_id}" placeholder="송장번호">
@@ -742,7 +812,15 @@ function renderOrders(orders) {
          </div>`
       : (o.tracking_number || '-');
     return `<tr>
-      <td style="font-size:11px;color:#555;">${o.order_id}</td>
+      <td><input type="checkbox" class="order-chk" data-order-id="${o.order_id}" data-ordersheet-id="${o.ordersheet_id}"
+           ${isPending ? '' : 'disabled'} onchange="updateOrderSelected()"
+           style="accent-color:#7c3aed;cursor:${isPending ? 'pointer' : 'default'};"></td>
+      <td style="font-size:11px;">
+        <span style="color:#555;">${o.order_id}</span><br>
+        <span class="plat-badge ${o.platform === 'naver' ? 'plat-naver' : 'plat-coupang'}" style="margin-top:3px;display:inline-flex;">
+          ${o.platform === 'naver' ? '네이버' : '쿠팡'}
+        </span>
+      </td>
       <td class="title-cell">${o.title || '-'}</td>
       <td class="num">${o.qty}</td>
       <td>${o.buyer_name || '-'}</td>
@@ -752,6 +830,25 @@ function renderOrders(orders) {
       <td>${trackingCell}</td>
     </tr>`;
   }).join('');
+  updateOrderSelected();
+}
+
+function toggleAllOrders(master) {
+  document.querySelectorAll('.order-chk:not(:disabled)').forEach(c => c.checked = master.checked);
+  updateOrderSelected();
+}
+
+function updateOrderSelected() {
+  const checked = [...document.querySelectorAll('.order-chk:checked')];
+  const el = document.getElementById('orderSelectedCount');
+  el.textContent = checked.length > 0 ? `${checked.length}개 선택됨` : '';
+  const allCb = document.getElementById('chkAllOrders');
+  const total = document.querySelectorAll('.order-chk:not(:disabled)').length;
+  if (allCb) allCb.checked = total > 0 && checked.length === total;
+}
+
+function getSelectedOrderIds() {
+  return [...document.querySelectorAll('.order-chk:checked')].map(c => c.dataset.orderId);
 }
 
 async function syncOrders() {
@@ -766,17 +863,47 @@ async function syncOrders() {
 async function runDropship() {
   const btn = document.getElementById('btnDropship');
   const msg = document.getElementById('orderMsg');
+  const logBox = document.getElementById('orderLogBox');
   btn.disabled = true;
-  msg.textContent = '자동 주문 실행 중...';
-  const res = await fetch('/api/orders/run', { method: 'POST' });
+  msg.textContent = '실행 중...';
+  logBox.style.display = 'block';
+  logBox.innerHTML = '';
+
+  const selectedIds = getSelectedOrderIds();
+  if (!selectedIds.length) {
+    msg.textContent = '주문을 선택해주세요';
+    btn.disabled = false;
+    return;
+  }
+  const res = await fetch('/api/orders/run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({order_ids: selectedIds}),
+  });
   const data = await res.json();
   if (data.error) {
     msg.textContent = '오류: ' + data.error;
     btn.disabled = false;
     return;
   }
-  msg.textContent = '실행 중 (로그 확인)';
-  setTimeout(async () => { await loadOrders(); btn.disabled = false; msg.textContent = '완료'; }, 5000);
+
+  if (_es) _es.close();
+  _es = new EventSource('/api/pipeline/stream');
+  _es.onmessage = e => {
+    if (e.data === 'ping') return;
+    if (e.data === '__END__') {
+      _es.close();
+      btn.disabled = false;
+      msg.textContent = '완료';
+      loadOrders();
+      return;
+    }
+    const line = document.createElement('div');
+    line.style.color = e.data.includes('완료') ? '#22c55e' : e.data.includes('실패') || e.data.includes('오류') ? '#ef4444' : '#a0aec0';
+    line.textContent = JSON.parse(e.data);
+    logBox.appendChild(line);
+    logBox.scrollTop = logBox.scrollHeight;
+  };
 }
 
 async function submitTracking(orderId, ordersheetId) {
