@@ -1,0 +1,102 @@
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #0d0d1a;
+  cursor: grab;
+}
+
+.app:active {
+  cursor: grabbing;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 10;
+}
+
+.overlay-card {
+  background: linear-gradient(160deg, #1a1a3a, #0d0d2e);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 24px;
+  padding: 40px 52px;
+  text-align: center;
+  min-width: 260px;
+}
+
+.over-label {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.over-score {
+  margin: 0 0 4px;
+  font-size: 72px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1;
+}
+
+.over-best {
+  margin: 0 0 32px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.45);
+  letter-spacing: 2px;
+}
+
+.revive-btn {
+  display: block;
+  width: 100%;
+  padding: 16px 0;
+  margin-bottom: 12px;
+  border: 2px solid rgba(255, 220, 50, 0.7);
+  border-radius: 50px;
+  background: linear-gradient(90deg, #f7b731, #f9ca24);
+  color: #1a1a1a;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.revive-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.revive-btn:not(:disabled):active {
+  opacity: 0.8;
+}
+
+.play-btn {
+  display: block;
+  width: 100%;
+  padding: 16px 0;
+  border: none;
+  border-radius: 50px;
+  background: linear-gradient(90deg, #FF6B6B, #FF8E53);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.play-btn:active {
+  opacity: 0.8;
+}
