@@ -165,7 +165,6 @@ class TankAuctionCrawler:
         regions: List[str],
         max_appraised_value: int = 200_000_000,
         property_types: List[str] = ["다세대", "연립", "빌라"],
-        max_pages: int = 5,
     ) -> List[Dict]:
         all_items = []
 
@@ -175,7 +174,7 @@ class TankAuctionCrawler:
         self._page.wait_for_timeout(2000)
 
         for region in regions:
-            items = self._search_region(region, max_appraised_value, property_types, max_pages)
+            items = self._search_region(region, max_appraised_value, property_types)
             all_items.extend(items)
 
         return all_items
@@ -185,17 +184,20 @@ class TankAuctionCrawler:
         region: str,
         max_value: int,
         property_types: List[str],
-        max_pages: int,
     ) -> List[Dict]:
         items = []
         sicd, gucd = REGION_CODES.get(region, ("0", "0"))
 
-        codes = []
-        for pt in property_types:
-            codes.extend(PROPERTY_CODES.get(pt, "").split(","))
-        ctgr_cd = "|".join(c.strip() for c in codes if c.strip())
-
+        cb_ids = list(dict.fromkeys(
+            "chkEaCtgr_" + PROPERTY_CODES[pt].replace(",", "_")
+            for pt in property_types if pt in PROPERTY_CODES
+        ))
+        cb_ids_js = json.dumps(cb_ids)
         max_wan = max_value // 10_000
+
+        allowed_ctgrs = set()
+        for pt in property_types:
+            allowed_ctgrs.update(PROP_TYPE_CTGRS.get(pt, [pt]))
 
         api_results = {}
 
@@ -210,58 +212,76 @@ class TankAuctionCrawler:
         self._page.on("response", on_response)
 
         try:
-            for page_no in range(1, max_pages + 1):
+            # 1페이지: 조건 설정 + totalCnt 확인
+            api_results.clear()
+            self._page.evaluate(f"""
+                async () => {{
+                    const siSel = document.querySelector("select[name=siCd]");
+                    siSel.value = "{sicd}";
+                    siSel.dispatchEvent(new Event("change", {{bubbles: true}}));
+                }}
+            """)
+            self._page.wait_for_timeout(1000)
+
+            self._page.evaluate(f"""
+                () => {{
+                    const guSel = document.querySelector("select[name=guCd]");
+                    if (guSel) guSel.value = "{gucd}";
+
+                    document.querySelectorAll('input[name=chkEaCtgr]').forEach(cb => {{
+                        if (cb.checked) cb.click();
+                    }});
+                    {cb_ids_js}.forEach(id => {{
+                        const cb = document.getElementById(id);
+                        if (cb && !cb.checked) cb.click();
+                    }});
+
+                    const maxInput = document.querySelector("input[name=apslAmtMax]");
+                    if (maxInput) maxInput.value = "{max_wan}";
+
+                    srchList(1);
+                }}
+            """)
+            self._page.wait_for_timeout(3000)
+
+            data = api_results.get("data", {})
+            total = data.get("totalCnt", 0)
+            page_items = data.get("item", [])
+
+            if not page_items:
+                return items
+
+            import math
+            total_pages = math.ceil(total / 20)
+            print(f"[{region}] 전체 {total}건 / {total_pages}페이지 순회 시작")
+
+            # 1페이지 결과 처리
+            for item in page_items:
+                if item.get("ctgr", "") not in allowed_ctgrs:
+                    continue
+                if item.get("apslAmt", 0) > max_value:
+                    continue
+                item["search_region"] = region
+                item["ctgr"] = CTGR_NORMALIZE.get(item["ctgr"], item["ctgr"])
+                item["floor_info"] = self._extract_floor_info(item)
+                item["list_build_year"] = self._extract_build_year(item)
+                item["list_elevator"] = self._estimate_elevator(item)
+                item["list_room_info"] = self._extract_room_info(item)
+                items.append(item)
+
+            print(f"[{region}] 페이지 1/{total_pages}: {len(items)}건 누적")
+
+            # 2페이지부터: srchList(page_no)만 호출
+            for page_no in range(2, total_pages + 1):
                 api_results.clear()
-
-                self._page.evaluate(f"""
-                    async () => {{
-                        const siSel = document.querySelector("select[name=siCd]");
-                        siSel.value = "{sicd}";
-                        siSel.dispatchEvent(new Event("change", {{bubbles: true}}));
-                    }}
-                """)
-                self._page.wait_for_timeout(1000)
-
-                cb_ids = [
-                    "chkEaCtgr_" + PROPERTY_CODES[pt].replace(",", "_")
-                    for pt in property_types if pt in PROPERTY_CODES
-                ]
-                cb_ids_js = json.dumps(cb_ids)
-
-                self._page.evaluate(f"""
-                    () => {{
-                        const guSel = document.querySelector("select[name=guCd]");
-                        if (guSel) guSel.value = "{gucd}";
-
-                        document.querySelectorAll('input[name=chkEaCtgr]').forEach(cb => {{
-                            if (cb.checked) cb.click();
-                        }});
-                        {cb_ids_js}.forEach(id => {{
-                            const cb = document.getElementById(id);
-                            if (cb && !cb.checked) cb.click();
-                        }});
-
-                        const maxInput = document.querySelector("input[name=apslAmtMax]");
-                        if (maxInput) maxInput.value = "{max_wan}";
-
-                        srchList({page_no});
-                    }}
-                """)
+                self._page.evaluate(f"srchList({page_no})")
                 self._page.wait_for_timeout(3000)
 
                 data = api_results.get("data", {})
                 page_items = data.get("item", [])
-                total = data.get("totalCnt", 0)
 
                 if not page_items:
                     break
-
-                allowed_ctgrs = set()
-                for pt in property_types:
-                    allowed_ctgrs.update(PROP_TYPE_CTGRS.get(pt, [pt]))
-
-                if page_no == 1 and page_items and not items:
-                    print(f"[DEBUG] API 필드: {list(page_items[0].keys())}")
 
                 for item in page_items:
                     if item.get("ctgr", "") not in allowed_ctgrs:
@@ -276,10 +296,7 @@ class TankAuctionCrawler:
                     item["list_room_info"] = self._extract_room_info(item)
                     items.append(item)
 
-                print(f"[{region}] 페이지 {page_no}: {len(page_items)}건 중 {sum(1 for i in page_items if i.get('ctgr','') in allowed_ctgrs)}건 필터 (전체 {total}건)")
-
-                if page_no * 20 >= total:
-                    break
+                print(f"[{region}] 페이지 {page_no}/{total_pages}: {len(items)}건 누적")
 
         finally:
             self._page.remove_listener("response", on_response)

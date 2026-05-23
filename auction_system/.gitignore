@@ -1,5 +1,9 @@
-.env
+pw/
 __pycache__/
 *.pyc
-*.db
+*.pyo
+.env
+*.swp
 .DS_Store
+logs/
+db/*.db

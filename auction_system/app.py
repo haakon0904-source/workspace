@@ -88,10 +88,10 @@ def rights_conclusion(tenants, hug_waived, resist_waived, insu_man):
     return f'<div class="{cls}">{body} {tag_str}</div>'
 
 # ── 실행 래퍼 ────────────────────────────────────────────────────
-def run_search(regions, max_val, prop_types, max_pages):
+def run_search(regions, max_val, prop_types):
     def _run():
         with TankAuctionCrawler() as c:
-            return c.search(regions, max_val, prop_types, max_pages)
+            return c.search(regions, max_val, prop_types)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         return ex.submit(_run).result()
 
@@ -108,7 +108,6 @@ with st.sidebar:
     regions = st.multiselect("지역", ["인천", "안산", "고양", "경기도 광주"], default=["인천"])
     prop_types = st.multiselect("물건 종류", ["다세대", "연립", "빌라"], default=["다세대", "연립"])
     max_appraised = st.number_input("감정가 상한 (만원)", 1000, 50000, 20000, 1000)
-    max_pages = st.slider("최대 페이지 수", 1, 10, 3)
     only_waived = st.checkbox("허그/대항력포기 물건만")
     st.divider()
     search_btn = st.button("🔍 매물 검색", type="primary", use_container_width=True)
@@ -226,7 +225,7 @@ with tab_main:
             st.warning("지역을 선택해주세요.")
         else:
             with st.spinner("탱크옥션에서 매물 검색 중..."):
-                results = run_search(regions, max_appraised * 10_000, prop_types, max_pages)
+                results = run_search(regions, max_appraised * 10_000, prop_types)
             if results:
                 st.session_state["results"] = results
                 st.session_state.pop("detail", None)
