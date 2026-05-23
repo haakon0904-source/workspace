@@ -9,7 +9,7 @@ import re, sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 from crawlers.tankauction import TankAuctionCrawler, PROPERTY_CODES
 from crawlers.budongsan_planet import fetch_planet_trades_sync
-import asyncio
+import concurrent.futures
 
 st.set_page_config(page_title="부동산 경매 자동화", page_icon="🏠", layout="wide")
 
@@ -87,19 +87,20 @@ def rights_conclusion(tenants, hug_waived, resist_waived, insu_man):
     tag_str = " ".join(tags)
     return f'<div class="{cls}">{body} {tag_str}</div>'
 
-# ── 비동기 실행 래퍼 ─────────────────────────────────────────────
+# ── 실행 래퍼 ────────────────────────────────────────────────────
 def run_search(regions, max_val, prop_types, max_pages):
-    async def _run():
-        async with TankAuctionCrawler() as c:
-            return await c.search(regions, max_val, prop_types, max_pages)
-    return asyncio.run(_run())
+    def _run():
+        with TankAuctionCrawler() as c:
+            return c.search(regions, max_val, prop_types, max_pages)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(_run).result()
 
 def run_detail(tid):
-    async def _run():
-        async with TankAuctionCrawler() as c:
-            d = await c.get_detail(tid)
-            return d.to_dict()
-    return asyncio.run(_run())
+    def _run():
+        with TankAuctionCrawler() as c:
+            return c.get_detail(tid).to_dict()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(_run).result()
 
 # ── 사이드바 ─────────────────────────────────────────────────────
 with st.sidebar:
@@ -316,7 +317,12 @@ with tab_main:
             p4.info(f"**건물면적** {bldg_val}")
             p5.info(f"**상태** {pr.get('statNm', '-')}")
 
-        if st.button("📊 상세 분석 실행", type="primary"):
+        btn_col1, btn_col2 = st.columns([3, 1])
+        with btn_col2:
+            st.link_button("🔗 탱크옥션 상세", f"https://www.tankauction.com/ca/caView.php?tid={selected_tid}", use_container_width=True)
+        with btn_col1:
+            run_btn = st.button("📊 상세 분석 실행", type="primary", use_container_width=True)
+        if run_btn:
             with st.spinner("권리분석 및 실거래가 조회 중..."):
                 detail = run_detail(selected_tid)
             planet_url = detail.get("planet_url", "")
