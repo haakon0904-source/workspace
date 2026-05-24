@@ -4,7 +4,8 @@
 """
 import streamlit as st
 import pandas as pd
-import re, sys, os
+import re, sys, os, time
+import queue as q_module
 
 sys.path.insert(0, os.path.dirname(__file__))
 from crawlers.tankauction import TankAuctionCrawler, PROPERTY_CODES
@@ -88,10 +89,10 @@ def rights_conclusion(tenants, hug_waived, resist_waived, insu_man):
     return f'<div class="{cls}">{body} {tag_str}</div>'
 
 # ── 실행 래퍼 ────────────────────────────────────────────────────
-def run_search(regions, max_val, prop_types):
+def run_search(regions, max_val, prop_types, progress_callback=None):
     def _run():
         with TankAuctionCrawler() as c:
-            return c.search(regions, max_val, prop_types)
+            return c.search(regions, max_val, prop_types, progress_callback=progress_callback)
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
         return ex.submit(_run).result()
 
@@ -224,8 +225,33 @@ with tab_main:
         if not regions:
             st.warning("지역을 선택해주세요.")
         else:
-            with st.spinner("탱크옥션에서 매물 검색 중..."):
-                results = run_search(regions, max_appraised * 10_000, prop_types)
+            pq = q_module.Queue()
+
+            def on_progress(region, page, total_pages, found):
+                pq.put((region, page, total_pages, found))
+
+            status_ph = st.empty()
+            bar_ph = st.empty()
+
+            def _do_search():
+                with TankAuctionCrawler() as c:
+                    return c.search(regions, max_appraised * 10_000, prop_types, progress_callback=on_progress)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(_do_search)
+                while not future.done():
+                    try:
+                        region, page, total_pages, found = pq.get_nowait()
+                        pct = page / total_pages if total_pages > 0 else 0.0
+                        bar_ph.progress(pct)
+                        status_ph.markdown(f"🔍 **{region}** {page} / {total_pages} 페이지 · {found}건 수집중...")
+                    except q_module.Empty:
+                        time.sleep(0.2)
+                results = future.result()
+
+            bar_ph.empty()
+            status_ph.empty()
+
             if results:
                 st.session_state["results"] = results
                 st.session_state.pop("detail", None)
@@ -251,12 +277,39 @@ with tab_main:
         with col3:
             max_fail = st.slider("최대 유찰", 0, 10, 10, key="mf")
 
+        col4, col5, col6, col7 = st.columns([2, 1, 1, 2])
+        with col4:
+            max_pct = st.slider("최저가율% 상한", 50, 100, 100, key="mp")
+        with col5:
+            floor_min = st.number_input("층 최소", 1, 20, 1, key="fmin")
+        with col6:
+            floor_max = st.number_input("층 최대", 1, 20, 20, key="fmax")
+        with col7:
+            elev_filter = st.selectbox("엘베", ["전체", "없음만", "있음만"], key="ef")
+
         df["fail_cnt"] = df["statNm"].str.extract(r"(\d+)회").fillna(0).astype(int)
         filtered = df[
             df["search_region"].isin(filter_region) &
             df["ctgr"].isin(filter_type) &
             (df["fail_cnt"] <= max_fail)
         ]
+
+        # 최저가율% 상한 필터
+        filtered = filtered[filtered["minbPct"].fillna(100).astype(int) <= max_pct]
+
+        # 층 범위 필터
+        def _extract_floor(s):
+            m = re.match(r"(\d+)층", str(s))
+            return int(m.group(1)) if m else None
+        if floor_min > 1 or floor_max < 20:
+            floor_nums = filtered["floor_info"].apply(_extract_floor)
+            filtered = filtered[floor_nums.isna() | ((floor_nums >= floor_min) & (floor_nums <= floor_max))]
+
+        # 엘베 필터
+        if elev_filter == "없음만":
+            filtered = filtered[filtered["list_elevator"].astype(str).str.contains("없음", na=False)]
+        elif elev_filter == "있음만":
+            filtered = filtered[filtered["list_elevator"].astype(str).str.contains("있음", na=False)]
 
         # 허그/대항력포기 필터 - 여러 필드·표기 통합 검색
         if only_waived:

@@ -165,6 +165,7 @@ class TankAuctionCrawler:
         regions: List[str],
         max_appraised_value: int = 200_000_000,
         property_types: List[str] = ["다세대", "연립", "빌라"],
+        progress_callback=None,
     ) -> List[Dict]:
         all_items = []
 
@@ -174,7 +175,7 @@ class TankAuctionCrawler:
         self._page.wait_for_timeout(2000)
 
         for region in regions:
-            items = self._search_region(region, max_appraised_value, property_types)
+            items = self._search_region(region, max_appraised_value, property_types, progress_callback)
             all_items.extend(items)
 
         return all_items
@@ -184,6 +185,7 @@ class TankAuctionCrawler:
         region: str,
         max_value: int,
         property_types: List[str],
+        progress_callback=None,
     ) -> List[Dict]:
         items = []
         sicd, gucd = REGION_CODES.get(region, ("0", "0"))
@@ -270,6 +272,8 @@ class TankAuctionCrawler:
                 items.append(item)
 
             print(f"[{region}] 페이지 1/{total_pages}: {len(items)}건 누적")
+            if progress_callback:
+                progress_callback(region, 1, total_pages, len(items))
 
             # 2페이지부터: srchList(page_no)만 호출
             for page_no in range(2, total_pages + 1):
@@ -297,6 +301,8 @@ class TankAuctionCrawler:
                     items.append(item)
 
                 print(f"[{region}] 페이지 {page_no}/{total_pages}: {len(items)}건 누적")
+                if progress_callback:
+                    progress_callback(region, page_no, total_pages, len(items))
 
         finally:
             self._page.remove_listener("response", on_response)
