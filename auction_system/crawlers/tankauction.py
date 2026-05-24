@@ -436,8 +436,8 @@ class TankAuctionCrawler:
         try:
             import fitz
             pdf_page_url = f"{BASE_URL}/ca/caFile.php?tid={tid}&tp=AF&idx={appraisal_idx}&free="
-            page.goto(pdf_page_url, wait_until="domcontentloaded", timeout=15000)
-            page.wait_for_timeout(1000)
+            page.goto(pdf_page_url, wait_until="networkidle", timeout=20000)
+            page.wait_for_timeout(2000)
             soup = BeautifulSoup(page.content(), "lxml")
             iframe = soup.find("iframe", class_="linkView")
             if not iframe:
@@ -496,14 +496,16 @@ class TankAuctionCrawler:
             page = page_pool.get()
             try:
                 page.goto(f"{BASE_URL}/ca/caView.php?tid={tid}",
-                          wait_until="domcontentloaded", timeout=15000)
-                page.wait_for_timeout(2500)
+                          wait_until="networkidle", timeout=25000)
+                page.wait_for_timeout(4000)
                 soup = BeautifulSoup(page.content(), "lxml")
                 elevator = self._parse_elevator_from_soup(soup)
                 appraisal_idx = self._extract_appraisal_idx_from_soup(soup)
+                print(f"[배치] tid={tid} 엘베={elevator} appraisal_idx={appraisal_idx}")
                 rooms, baths = "미확인", "미확인"
                 if appraisal_idx:
                     rooms, baths = self._fetch_rooms_from_pdf_text(page, tid, appraisal_idx)
+                print(f"[배치] tid={tid} 방={rooms} 화={baths}")
             except Exception as e:
                 print(f"[WARN] tid={tid}: {e}")
                 elevator, rooms, baths = "미확인", "미확인", "미확인"
