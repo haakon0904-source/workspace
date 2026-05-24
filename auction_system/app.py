@@ -277,15 +277,26 @@ with tab_main:
         with col3:
             max_fail = st.slider("최대 유찰", 0, 10, 10, key="mf")
 
-        col4, col5, col6, col7 = st.columns([2, 1, 1, 2])
+        # 주소에서 구 추출
+        df["gu"] = df["regnAdrs"].str.extract(r"([가-힣]+구)")
+        gu_options = sorted(df["gu"].dropna().unique().tolist())
+
+        col4, col5, col6 = st.columns([2, 1, 1])
         with col4:
             max_pct = st.slider("최저가율% 상한", 50, 100, 100, key="mp")
         with col5:
             floor_min = st.number_input("층 최소", 1, 20, 1, key="fmin")
         with col6:
             floor_max = st.number_input("층 최대", 1, 20, 20, key="fmax")
+
+        col7, col8, col9 = st.columns([1, 1, 2])
+        max_amt_default = int(df["minbAmt"].max() // 10_000) if "minbAmt" in df.columns else 20000
         with col7:
-            elev_filter = st.selectbox("엘베", ["전체", "없음만", "있음만"], key="ef")
+            price_min = st.number_input("최저가 최소(만원)", 0, 50000, 0, 500, key="prmin")
+        with col8:
+            price_max = st.number_input("최저가 최대(만원)", 0, 50000, max_amt_default, 500, key="prmax")
+        with col9:
+            filter_gu = st.multiselect("구 필터", gu_options, default=gu_options, key="fg") if gu_options else []
 
         df["fail_cnt"] = df["statNm"].str.extract(r"(\d+)회").fillna(0).astype(int)
         filtered = df[
@@ -305,11 +316,16 @@ with tab_main:
             floor_nums = filtered["floor_info"].apply(_extract_floor)
             filtered = filtered[floor_nums.isna() | ((floor_nums >= floor_min) & (floor_nums <= floor_max))]
 
-        # 엘베 필터
-        if elev_filter == "없음만":
-            filtered = filtered[filtered["list_elevator"].astype(str).str.contains("없음", na=False)]
-        elif elev_filter == "있음만":
-            filtered = filtered[filtered["list_elevator"].astype(str).str.contains("있음", na=False)]
+        # 최저가 범위 필터
+        if price_min > 0 or price_max < max_amt_default:
+            filtered = filtered[
+                (filtered["minbAmt"].fillna(0) >= price_min * 10_000) &
+                (filtered["minbAmt"].fillna(0) <= price_max * 10_000)
+            ]
+
+        # 구 필터
+        if filter_gu:
+            filtered = filtered[filtered["gu"].isin(filter_gu)]
 
         # 허그/대항력포기 필터 - 여러 필드·표기 통합 검색
         if only_waived:
