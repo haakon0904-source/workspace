@@ -166,6 +166,7 @@ class TankAuctionCrawler:
         max_appraised_value: int = 200_000_000,
         property_types: List[str] = ["다세대", "연립", "빌라"],
         progress_callback=None,
+        batch_callback=None,
     ) -> List[Dict]:
         all_items = []
 
@@ -177,6 +178,9 @@ class TankAuctionCrawler:
         for region in regions:
             items = self._search_region(region, max_appraised_value, property_types, progress_callback)
             all_items.extend(items)
+
+        if all_items:
+            self._fetch_detail_batch(all_items, batch_callback)
 
         return all_items
 
@@ -401,6 +405,135 @@ class TankAuctionCrawler:
             b = f"{bath}욕" if bath else "-"
             return f"{r}/{b}"
         return ""
+
+    # ── 배치 엘베/방 수집 ─────────────────────────────────────────
+
+    def _parse_elevator_from_soup(self, soup: BeautifulSoup) -> str:
+        obj_div = soup.find(id="lyCnt_object")
+        if not obj_div:
+            return "미확인"
+        text = obj_div.get_text()
+        no_kws  = ["승강기없음","승강기 없음","승강기:없음","E/V없음","E.V없음","엘리베이터 없음","승강기 : 없음"]
+        yes_kws = ["승강기있음","승강기 있음","승강기:있음","E/V있음","엘리베이터 있음","승강기 : 있음"]
+        if any(k in text for k in no_kws):
+            return "N"
+        if any(k in text for k in yes_kws):
+            return "Y"
+        return "미확인"
+
+    def _extract_appraisal_idx_from_soup(self, soup: BeautifulSoup) -> Optional[str]:
+        for a in soup.find_all("a"):
+            txt = a.get_text(strip=True)
+            href = a.get("href", "")
+            onclick = a.get("onclick", "")
+            if txt == "감정평가서":
+                m = re.search(r"fileView\(\d+,'AF','?(\d+)'?,", href + onclick)
+                if m:
+                    return m.group(1)
+        return None
+
+    def _fetch_rooms_from_pdf_text(self, page, tid: int, appraisal_idx: str) -> tuple:
+        try:
+            import fitz
+            pdf_page_url = f"{BASE_URL}/ca/caFile.php?tid={tid}&tp=AF&idx={appraisal_idx}&free="
+            page.goto(pdf_page_url, wait_until="domcontentloaded", timeout=15000)
+            page.wait_for_timeout(1000)
+            soup = BeautifulSoup(page.content(), "lxml")
+            iframe = soup.find("iframe", class_="linkView")
+            if not iframe:
+                return "미확인", "미확인"
+            src = iframe.get("src", "")
+            m = re.search(r"file=(/FILE/[^&\"]+\.pdf)", src)
+            if not m:
+                return "미확인", "미확인"
+            resp = page.request.get(f"{BASE_URL}{m.group(1)}")
+            pdf_bytes = resp.body()
+            if len(pdf_bytes) < 10000:
+                return "미확인", "미확인"
+            pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+            full_text = "\n".join(p.get_text() for p in pdf)
+            pdf.close()
+
+            room = 0
+            for pat in [r"침\s*실\s*(\d+)", r"방\s*(\d+)\s*개", r"(\d+)\s*침실"]:
+                m2 = re.search(pat, full_text)
+                if m2:
+                    room = int(m2.group(1)); break
+
+            bath = 0
+            for pat in [r"욕\s*실\s*(\d+)", r"화장실\s*(\d+)\s*개", r"(\d+)\s*욕실"]:
+                m2 = re.search(pat, full_text)
+                if m2:
+                    bath = int(m2.group(1)); break
+
+            return (str(room) if room > 0 else "미확인"), (str(bath) if bath > 0 else "미확인")
+        except Exception as e:
+            print(f"[WARN] PDF 방수 파싱 tid={tid}: {e}")
+            return "미확인", "미확인"
+
+    def _fetch_detail_batch(self, items: List[Dict], batch_callback=None) -> None:
+        import queue as _q
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import math as _math
+
+        total = len(items)
+        if total == 0:
+            return
+        NUM_WORKERS = min(8, total)
+        est_sec = _math.ceil(total / NUM_WORKERS) * 5
+        print(f"[배치] {total}건 엘베/방 수집 시작 (예상 {est_sec//60}분 {est_sec%60}초)")
+        if batch_callback:
+            batch_callback(0, total, est_sec)
+
+        worker_pages = [self._browser.new_page() for _ in range(NUM_WORKERS)]
+        page_pool = _q.Queue()
+        for p in worker_pages:
+            page_pool.put(p)
+
+        tid_map = {item["tid"]: item for item in items if "tid" in item}
+
+        def fetch_one(tid):
+            page = page_pool.get()
+            try:
+                page.goto(f"{BASE_URL}/ca/caView.php?tid={tid}",
+                          wait_until="domcontentloaded", timeout=15000)
+                page.wait_for_timeout(2500)
+                soup = BeautifulSoup(page.content(), "lxml")
+                elevator = self._parse_elevator_from_soup(soup)
+                appraisal_idx = self._extract_appraisal_idx_from_soup(soup)
+                rooms, baths = "미확인", "미확인"
+                if appraisal_idx:
+                    rooms, baths = self._fetch_rooms_from_pdf_text(page, tid, appraisal_idx)
+            except Exception as e:
+                print(f"[WARN] tid={tid}: {e}")
+                elevator, rooms, baths = "미확인", "미확인", "미확인"
+            finally:
+                page_pool.put(page)
+            return tid, elevator, rooms, baths
+
+        completed = 0
+        with ThreadPoolExecutor(max_workers=NUM_WORKERS) as ex:
+            futures = {ex.submit(fetch_one, tid): tid for tid in tid_map}
+            for future in as_completed(futures):
+                tid, elevator, rooms, baths = future.result()
+                if tid in tid_map:
+                    tid_map[tid]["list_elevator"] = elevator
+                    if rooms != "미확인" or baths != "미확인":
+                        r = f"방{rooms}" if rooms != "미확인" else "방?"
+                        b = f"화{baths}" if baths != "미확인" else "화?"
+                        tid_map[tid]["list_room_info"] = f"{r}/{b}"
+                    else:
+                        tid_map[tid]["list_room_info"] = "미확인"
+                completed += 1
+                remaining = max(0, _math.ceil((total - completed) / NUM_WORKERS) * 5)
+                if batch_callback:
+                    batch_callback(completed, total, remaining)
+
+        for p in worker_pages:
+            try: p.close()
+            except: pass
+
+    # ─────────────────────────────────────────────────────────────
 
     def get_detail(self, tid: int) -> AuctionDetail:
         detail = AuctionDetail(tid=tid)

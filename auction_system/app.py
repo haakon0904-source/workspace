@@ -228,23 +228,41 @@ with tab_main:
             pq = q_module.Queue()
 
             def on_progress(region, page, total_pages, found):
-                pq.put((region, page, total_pages, found))
+                pq.put({"type": "list", "region": region, "page": page,
+                        "total_pages": total_pages, "found": found})
+
+            def on_batch(completed, total, est_remaining):
+                pq.put({"type": "batch", "completed": completed,
+                        "total": total, "est_remaining": est_remaining})
 
             status_ph = st.empty()
             bar_ph = st.empty()
 
             def _do_search():
                 with TankAuctionCrawler() as c:
-                    return c.search(regions, max_appraised * 10_000, prop_types, progress_callback=on_progress)
+                    return c.search(regions, max_appraised * 10_000, prop_types,
+                                    progress_callback=on_progress,
+                                    batch_callback=on_batch)
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(_do_search)
                 while not future.done():
                     try:
-                        region, page, total_pages, found = pq.get_nowait()
-                        pct = page / total_pages if total_pages > 0 else 0.0
-                        bar_ph.progress(pct)
-                        status_ph.markdown(f"🔍 **{region}** {page} / {total_pages} 페이지 · {found}건 수집중...")
+                        msg = pq.get_nowait()
+                        if msg["type"] == "list":
+                            pct = msg["page"] / msg["total_pages"] if msg["total_pages"] > 0 else 0.0
+                            bar_ph.progress(pct)
+                            status_ph.markdown(
+                                f"🔍 **[목록 수집]** {msg['region']} "
+                                f"{msg['page']}/{msg['total_pages']} 페이지 · {msg['found']}건")
+                        elif msg["type"] == "batch":
+                            pct = msg["completed"] / msg["total"] if msg["total"] > 0 else 0.0
+                            rem = msg["est_remaining"]
+                            time_str = f"{rem//60}분 {rem%60}초" if rem >= 60 else f"{rem}초"
+                            bar_ph.progress(pct)
+                            status_ph.markdown(
+                                f"🔎 **[엘베/방 수집]** {msg['completed']}/{msg['total']}건 "
+                                f"· 잔여 약 {time_str}")
                     except q_module.Empty:
                         time.sleep(0.2)
                 results = future.result()
@@ -281,21 +299,25 @@ with tab_main:
         df["gu"] = df["regnAdrs"].str.extract(r"([가-힣]+구)")
         gu_options = sorted(df["gu"].dropna().unique().tolist())
 
-        col4, col5, col6 = st.columns([2, 1, 1])
+        col4, col5, col6, col7, col8 = st.columns([2, 1, 1, 1, 1])
         with col4:
             max_pct = st.slider("최저가율% 상한", 50, 100, 100, key="mp")
         with col5:
             floor_min = st.number_input("층 최소", 1, 20, 1, key="fmin")
         with col6:
             floor_max = st.number_input("층 최대", 1, 20, 20, key="fmax")
-
-        col7, col8, col9 = st.columns([1, 1, 2])
-        max_amt_default = int(df["minbAmt"].max() // 10_000) if "minbAmt" in df.columns else 20000
         with col7:
-            price_min = st.number_input("최저가 최소(만원)", 0, 50000, 0, 500, key="prmin")
+            elev_filter = st.selectbox("엘베", ["전체", "Y", "N", "미확인"], key="ef")
         with col8:
-            price_max = st.number_input("최저가 최대(만원)", 0, 50000, max_amt_default, 500, key="prmax")
+            min_rooms = st.selectbox("방 최소", ["전체", "2개↑", "3개↑", "4개↑"], key="mr")
+
+        col9, col10, col11 = st.columns([1, 1, 2])
+        max_amt_default = int(df["minbAmt"].max() // 10_000) if "minbAmt" in df.columns else 20000
         with col9:
+            price_min = st.number_input("최저가 최소(만원)", 0, 50000, 0, 500, key="prmin")
+        with col10:
+            price_max = st.number_input("최저가 최대(만원)", 0, 50000, max_amt_default, 500, key="prmax")
+        with col11:
             filter_gu = st.multiselect("구 필터", gu_options, default=gu_options, key="fg") if gu_options else []
 
         df["fail_cnt"] = df["statNm"].str.extract(r"(\d+)회").fillna(0).astype(int)
@@ -326,6 +348,19 @@ with tab_main:
         # 구 필터
         if filter_gu:
             filtered = filtered[filtered["gu"].isin(filter_gu)]
+
+        # 엘베 필터
+        if elev_filter != "전체" and "list_elevator" in filtered.columns:
+            filtered = filtered[filtered["list_elevator"].astype(str) == elev_filter]
+
+        # 방 최소 필터
+        if min_rooms != "전체" and "list_room_info" in filtered.columns:
+            min_r = int(min_rooms[0])
+            def _room_num(s):
+                m = re.search(r"방(\d+)", str(s))
+                return int(m.group(1)) if m else None
+            room_nums = filtered["list_room_info"].apply(_room_num)
+            filtered = filtered[room_nums.isna() | (room_nums >= min_r)]
 
         # 허그/대항력포기 필터 - 여러 필드·표기 통합 검색
         if only_waived:
