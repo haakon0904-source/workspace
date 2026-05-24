@@ -398,84 +398,87 @@ with tab_main:
         if "최저가율%" in display.columns:
             display["최저가율%"] = display["최저가율%"].apply(lambda x: f"{x}%")
 
-        st.dataframe(display, use_container_width=True, hide_index=True, height=280)
+        st.caption("👆 행을 클릭하면 상세 분석 패널이 열립니다")
+        grid_event = st.dataframe(display, use_container_width=True, hide_index=True,
+                                  height=300, on_select="rerun", selection_mode="single-row")
 
-        # ── 물건 선택 → 상세 ─────────────────────────────────────
-        st.markdown("#### 🔎 물건 상세 분석")
+        # ── 행 클릭 → 상세 ───────────────────────────────────────
+        selected_tid = None
+        if grid_event.selection.rows:
+            selected_tid = filtered.iloc[grid_event.selection.rows[0]]["tid"]
 
-        options = {f"[{r['saNo']}] {r['regnAdrs'][:50]}": r["tid"] for r in filtered.to_dict("records")}
-        selected_label = st.selectbox("분석할 물건 선택", list(options.keys()))
-        selected_tid = options.get(selected_label)
+        if selected_tid is None:
+            st.info("위 그리드에서 물건을 클릭하세요.")
+        else:
+            st.markdown("#### 🔎 물건 상세 분석")
 
-        # ── 선택 물건 간략 정보 (상세분석 전 판단용) ─────────────
-        pre_row = filtered[filtered["tid"] == selected_tid]
-        if not pre_row.empty:
-            pr = pre_row.iloc[0]
-            p1, p2, p3, p4, p5 = st.columns(5)
-            p1.info(f"**감정가** {fmt_price(pr['apslAmt'])}")
-            p2.info(f"**최저가** {fmt_price(pr['minbAmt'])} ({pr['minbPct']}%)")
-            floor_val = pr.get("floor_info", "") or "-"
-            p3.info(f"**층** {floor_val}")
-            bldg_val = fmt_area(pr.get("bldgAr", 0))
-            p4.info(f"**건물면적** {bldg_val}")
-            p5.info(f"**상태** {pr.get('statNm', '-')}")
+            pre_row = filtered[filtered["tid"] == selected_tid]
+            if not pre_row.empty:
+                pr = pre_row.iloc[0]
+                p1, p2, p3, p4, p5 = st.columns(5)
+                p1.info(f"**감정가** {fmt_price(pr['apslAmt'])}")
+                p2.info(f"**최저가** {fmt_price(pr['minbAmt'])} ({pr['minbPct']}%)")
+                p3.info(f"**층** {pr.get('floor_info', '') or '-'}")
+                p4.info(f"**건물면적** {fmt_area(pr.get('bldgAr', 0))}")
+                p5.info(f"**상태** {pr.get('statNm', '-')}")
 
-        btn_col1, btn_col2 = st.columns([3, 1])
-        with btn_col2:
-            st.link_button("🔗 탱크옥션 상세", f"https://www.tankauction.com/ca/caView.php?tid={selected_tid}", use_container_width=True)
-        with btn_col1:
-            run_btn = st.button("📊 상세 분석 실행", type="primary", use_container_width=True)
-        if run_btn:
-            with st.spinner("권리분석 및 실거래가 조회 중..."):
-                detail = run_detail(selected_tid)
-            planet_url = detail.get("planet_url", "")
-            if planet_url:
-                with st.spinner("부동산플래닛 실거래 조회 중..."):
-                    sel_row = filtered[filtered["tid"] == selected_tid]
-                    bldg_m2 = 0.0
-                    prop_ctgr = ""
-                    if not sel_row.empty:
-                        try:
-                            bldg_m2 = float(sel_row.iloc[0].get("bldgAr") or detail.get("bldg_ar") or 0)
-                        except Exception:
-                            pass
-                        prop_ctgr = str(sel_row.iloc[0].get("ctgr", ""))
-                    detail["planet_trades"] = fetch_planet_trades_sync(
-                        planet_url, bldg_m2, prop_ctgr, max_results=8
-                    )
-            else:
-                detail["planet_trades"] = []
-            st.session_state["detail"] = detail
+            btn_col1, btn_col2 = st.columns([3, 1])
+            with btn_col2:
+                st.link_button("🔗 탱크옥션 상세",
+                               f"https://www.tankauction.com/ca/caView.php?tid={selected_tid}",
+                               use_container_width=True)
+            with btn_col1:
+                run_btn = st.button("📊 상세 분석 실행", type="primary", use_container_width=True)
 
-            # Vision AI 결과로 검색결과 목록의 방/욕 컬럼 업데이트
-            rc = detail.get("room_count", 0)
-            bc = detail.get("bathroom_count", 0)
-            if (rc or bc) and "list_room_info" in st.session_state["results"][0]:
-                r_str = f"{rc}방/{bc}욕" if (rc and bc) else (f"{rc}방" if rc else f"{bc}욕")
-                for item in st.session_state["results"]:
-                    if item.get("tid") == selected_tid:
-                        item["list_room_info"] = r_str
-                        break
+            if run_btn:
+                with st.spinner("권리분석 및 실거래가 조회 중..."):
+                    detail = run_detail(selected_tid)
+                planet_url = detail.get("planet_url", "")
+                if planet_url:
+                    with st.spinner("부동산플래닛 실거래 조회 중..."):
+                        sel_row = filtered[filtered["tid"] == selected_tid]
+                        bldg_m2 = 0.0
+                        prop_ctgr = ""
+                        if not sel_row.empty:
+                            try:
+                                bldg_m2 = float(sel_row.iloc[0].get("bldgAr") or detail.get("bldg_ar") or 0)
+                            except Exception:
+                                pass
+                            prop_ctgr = str(sel_row.iloc[0].get("ctgr", ""))
+                        detail["planet_trades"] = fetch_planet_trades_sync(
+                            planet_url, bldg_m2, prop_ctgr, max_results=8
+                        )
+                else:
+                    detail["planet_trades"] = []
+                st.session_state["detail"] = detail
 
-        # ── 상세 결과 출력 ───────────────────────────────────────
-        if "detail" in st.session_state:
-            d = st.session_state["detail"]
-            row = filtered[filtered["tid"] == selected_tid]
-            if row.empty:
-                st.warning("해당 물건 정보를 찾을 수 없습니다.")
-            else:
-                row = row.iloc[0]
-                tenants = d.get("tenants", [])
-                insu_man = calc_insu(tenants)
+                rc = detail.get("room_count", 0)
+                bc = detail.get("bathroom_count", 0)
+                if (rc or bc) and "list_room_info" in st.session_state["results"][0]:
+                    r_str = f"{rc}방/{bc}욕" if (rc and bc) else (f"{rc}방" if rc else f"{bc}욕")
+                    for item in st.session_state["results"]:
+                        if item.get("tid") == selected_tid:
+                            item["list_room_info"] = r_str
+                            break
 
-                # ── 기본정보 · 건물정보 · 주변환경 (소형 테이블) ──
-                bldg_area = row.get("bldgAr") or d.get("bldg_ar") or 0
-                lnd_area  = row.get("lndAr")  or d.get("lnd_ar")  or 0
-                room_label = f"{d.get('room_count',0)}개" if d.get('room_count') else "-"
-                bath_label = f"{d.get('bathroom_count',0)}개" if d.get('bathroom_count') else "-"
-                splcdtn_html = f'<tr><th>특수조건</th><td colspan="5" style="color:#c0392b">{row.get("splCdtn","")}</td></tr>' if row.get("splCdtn") else ""
+            # ── 상세 결과 출력 ───────────────────────────────────
+            if "detail" in st.session_state:
+                d = st.session_state["detail"]
+                row = filtered[filtered["tid"] == selected_tid]
+                if row.empty:
+                    st.warning("해당 물건 정보를 찾을 수 없습니다.")
+                else:
+                    row = row.iloc[0]
+                    tenants = d.get("tenants", [])
+                    insu_man = calc_insu(tenants)
 
-                info_html = f"""
+                    bldg_area = row.get("bldgAr") or d.get("bldg_ar") or 0
+                    lnd_area  = row.get("lndAr")  or d.get("lnd_ar")  or 0
+                    room_label = f"{d.get('room_count',0)}개" if d.get('room_count') else "-"
+                    bath_label = f"{d.get('bathroom_count',0)}개" if d.get('bathroom_count') else "-"
+                    splcdtn_html = f'<tr><th>특수조건</th><td colspan="5" style="color:#c0392b">{row.get("splCdtn","")}</td></tr>' if row.get("splCdtn") else ""
+
+                    info_html = f"""
 <style>
 .info-tbl {{width:100%;border-collapse:collapse;font-size:12px;}}
 .info-tbl th {{background:#f0f2f6;color:#555;font-weight:600;padding:4px 8px;border:1px solid #ddd;white-space:nowrap;width:80px;}}
@@ -516,64 +519,60 @@ with tab_main:
   </tr>
 </table>
 """
-                st.markdown(info_html, unsafe_allow_html=True)
-                st.markdown("")
+                    st.markdown(info_html, unsafe_allow_html=True)
+                    st.markdown("")
 
-                # ── 권리분석 ─────────────────────────────────────
-                st.markdown("#### ⚖️ 권리분석")
+                    st.markdown("#### ⚖️ 권리분석")
+                    conclusion_html = rights_conclusion(tenants, d.get("hug_waived", False), d.get("resist_waived", False), insu_man)
+                    st.markdown(conclusion_html, unsafe_allow_html=True)
+                    st.markdown(f"말소기준일 `{d.get('cancel_base_date','-')}` | 배당요구종기일 `{d.get('demand_deadline','-')}`")
 
-                conclusion_html = rights_conclusion(tenants, d.get("hug_waived", False), d.get("resist_waived", False), insu_man)
-                st.markdown(conclusion_html, unsafe_allow_html=True)
-                st.markdown(f"말소기준일 `{d.get('cancel_base_date','-')}` | 배당요구종기일 `{d.get('demand_deadline','-')}`")
+                    r_col1, r_col2 = st.columns(2)
+                    with r_col1:
+                        if tenants:
+                            tnt_df = pd.DataFrame(tenants)[["occupant","occupy_part","move_in_date","confirmed_date","deposit","resist_power","analysis"]]
+                            tnt_df.columns = ["임차인","점유부분","전입일","확정일자","보증금","대항력","분석"]
+                            st.dataframe(tnt_df, use_container_width=True, hide_index=True)
+                        else:
+                            st.success("✅ 임차내역 없음")
+                        if d.get("tenant_note"):
+                            with st.expander("임차인 기타사항"):
+                                st.text(d["tenant_note"])
+                    with r_col2:
+                        registry = d.get("registry", [])
+                        if registry:
+                            reg_df = pd.DataFrame(registry)[["reg_date","right_type","holder","amount","is_base","is_deleted"]]
+                            reg_df.columns = ["접수일","권리종류","권리자","채권금액","말소기준","소멸"]
+                            reg_df["말소기준"] = reg_df["말소기준"].apply(lambda x: "✅" if x else "")
+                            reg_df["소멸"] = reg_df["소멸"].apply(lambda x: "소멸" if x else "인수")
+                            st.dataframe(reg_df, use_container_width=True, hide_index=True)
 
-                r_col1, r_col2 = st.columns(2)
-                with r_col1:
-                    if tenants:
-                        tnt_df = pd.DataFrame(tenants)[["occupant","occupy_part","move_in_date","confirmed_date","deposit","resist_power","analysis"]]
-                        tnt_df.columns = ["임차인","점유부분","전입일","확정일자","보증금","대항력","분석"]
-                        st.dataframe(tnt_df, use_container_width=True, hide_index=True)
+                    st.markdown("#### 💰 부동산플래닛 실거래 (최근 2년)")
+                    planet_trades = d.get("planet_trades", [])
+                    if planet_trades:
+                        pt_df = pd.DataFrame(planet_trades)
+                        st.dataframe(pt_df, use_container_width=True, hide_index=True)
+                        try:
+                            prices = [int(str(t.get("거래금액(만원)", "0")).replace(",", ""))
+                                      for t in planet_trades if str(t.get("거래금액(만원)", "0")).replace(",", "").isdigit()]
+                            if prices:
+                                tc1, tc2, tc3 = st.columns(3)
+                                tc1.metric("평균 거래가", f"{sum(prices)/len(prices):,.0f}만원")
+                                tc2.metric("최고 거래가", f"{max(prices):,}만원")
+                                tc3.metric("최저 거래가", f"{min(prices):,}만원")
+                        except Exception:
+                            pass
                     else:
-                        st.success("✅ 임차내역 없음")
-                    if d.get("tenant_note"):
-                        with st.expander("임차인 기타사항"):
-                            st.text(d["tenant_note"])
+                        st.info("부동산플래닛 실거래 데이터 없음")
 
-                with r_col2:
-                    registry = d.get("registry", [])
-                    if registry:
-                        reg_df = pd.DataFrame(registry)[["reg_date","right_type","holder","amount","is_base","is_deleted"]]
-                        reg_df.columns = ["접수일","권리종류","권리자","채권금액","말소기준","소멸"]
-                        reg_df["말소기준"] = reg_df["말소기준"].apply(lambda x: "✅" if x else "")
-                        reg_df["소멸"] = reg_df["소멸"].apply(lambda x: "소멸" if x else "인수")
-                        st.dataframe(reg_df, use_container_width=True, hide_index=True)
-
-                # ── 부동산플래닛 실거래 ──────────────────────────
-                st.markdown("#### 💰 부동산플래닛 실거래 (최근 2년)")
-                planet_trades = d.get("planet_trades", [])
-                if planet_trades:
-                    pt_df = pd.DataFrame(planet_trades)
-                    st.dataframe(pt_df, use_container_width=True, hide_index=True)
-                    try:
-                        prices = [int(str(t.get("거래금액(만원)", "0")).replace(",", ""))
-                                  for t in planet_trades if str(t.get("거래금액(만원)", "0")).replace(",", "").isdigit()]
-                        if prices:
-                            tc1, tc2, tc3 = st.columns(3)
-                            tc1.metric("평균 거래가", f"{sum(prices)/len(prices):,.0f}만원")
-                            tc2.metric("최고 거래가", f"{max(prices):,}만원")
-                            tc3.metric("최저 거래가", f"{min(prices):,}만원")
-                    except Exception:
-                        pass
-                else:
-                    st.info("부동산플래닛 실거래 데이터 없음")
-
-                trades = d.get("trade_prices", [])
-                if trades:
-                    with st.expander("📄 국토부 실거래 원본"):
-                        trade_df = pd.DataFrame(trades)
-                        cols_show = [c for c in ["계약년월일","전용면적","층","거래금액","구분"] if c in trade_df.columns]
-                        if cols_show:
-                            st.dataframe(trade_df[cols_show].sort_values("계약년월일", ascending=False),
-                                         use_container_width=True, hide_index=True)
+                    trades = d.get("trade_prices", [])
+                    if trades:
+                        with st.expander("📄 국토부 실거래 원본"):
+                            trade_df = pd.DataFrame(trades)
+                            cols_show = [c for c in ["계약년월일","전용면적","층","거래금액","구분"] if c in trade_df.columns]
+                            if cols_show:
+                                st.dataframe(trade_df[cols_show].sort_values("계약년월일", ascending=False),
+                                             use_container_width=True, hide_index=True)
 
     else:
         with st.expander("📖 사용 방법"):
